@@ -79,46 +79,68 @@ SPIRE Server（外部 VM）
 | E — Envoy SDS | Envoy 透過 SDS 取得 cert | Envoy → istiod → SPIRE Agent → SPIRE Server |
 | F — App 啟動 + mTLS | App container 啟動，所有流量由 Envoy mTLS 保護 | Envoy + App |
 
-```
-Dev/k8s    OPA        CtrlMgr    SPIRE Svr  SPIRE Agt  istiod     Envoy
-  │          │           │           │           │          │          │
-  ├─A─────►│           │           │           │          │          │
-  │  kubectl │           │           │           │          │          │
-  │  apply   ├─[L1 SA]──┤           │           │          │          │
-  │          ├─[L2 lbl]─┤           │           │          │          │
-  │          ├─[L3 !def]┤           │           │          │          │
-  │◄─admit──┤           │           │           │          │          │
-  │          │           │           │           │          │          │
-  ├─B───────────────►│           │           │          │          │
-  │  pod created      ├──entry create──►│           │          │          │
-  │                   │◄──entry stored─┤           │          │          │
-  │          │           │           │           │          │          │
-  │─C────────────────────────────►│           │          │          │
-  │  k8s_sat token                 ├──TokenReview──►│          │          │
-  │◄────────────────────────────────────────┤          │          │
-  │                               ◄─attested + bundle─┤          │          │
-  │                                           ├─sock ready        │          │
-  │          │           │           │           │          │          │
-  │─D─────────────────────────────────────────────►│          │
-  │  wait-for-spire-socket                         ├─Workload API─►│          │
-  │                                               │◄──────────┤          │
-  │                                               │   CSR      ├──►│          │
-  │                                               │◄─ signed SVID ─┤          │
-  │                                               │◄──SVID+bundle──┤          │
-  │                                               ├─mesh CA ready   │          │
-  │          │           │           │           │          │          │
-  │─E──────────────────────────────────────────────────────────►│
-  │  SDS request                                           ◄──┤
-  │                                               ├─CSR relay──►│          │
-  │                                               │◄──SVID───────┤          │
-  │                                               ├──cert+key──────────────►│
-  │                                               │           Envoy ready   │
-  │          │           │           │           │          │          │
-  ├─F───────────────────────────────────────────────────────────►│
-  │  App container 啟動                                          │
-  │◄─────────mTLS（spiffe://poc.internal/ns/<ns>/sa/<sa>）───────┤
-  │          │           │           │           │          │          │
-  │          ↻ SVID rotate：SPIRE Agent 在 TTL 前推新 SVID → istiod 觸發 SDS push → Envoy 自動更新
+```mermaid
+sequenceDiagram
+    participant Dev as Dev / k8s
+    participant OPA as OPA Gatekeeper
+    participant CM  as Controller Manager
+    participant SS  as SPIRE Server
+    participant SA  as SPIRE Agent
+    participant IS  as istiod
+    participant EN  as Envoy
+
+    rect rgb(220, 235, 255)
+        Note over Dev,EN: Phase A — OPA Admission
+        Dev->>OPA: kubectl apply (Deployment)
+        OPA->>OPA: L1 SA 命名規則驗證
+        OPA->>OPA: L2 spiffe-managed label 驗證
+        OPA->>OPA: L3 禁止 default SA
+        OPA-->>Dev: admit
+    end
+
+    rect rgb(220, 255, 220)
+        Note over Dev,EN: Phase B — Entry 自動建立
+        Dev->>CM: pod created
+        CM->>SS: entry create（SPIFFE ID）
+        SS-->>CM: entry stored
+    end
+
+    rect rgb(255, 240, 210)
+        Note over Dev,EN: Phase C — Node Attestation
+        SA->>SS: k8s_sat token
+        SS->>SA: TokenReview（via kubeconfig）
+        SS-->>SA: attested + trust bundle
+        Note over SA: agent.sock 建立
+    end
+
+    rect rgb(240, 220, 255)
+        Note over Dev,EN: Phase D — istiod SVID
+        IS->>SA: wait-for-spire-socket（initContainer）
+        IS->>SA: Workload API — CSR
+        SA->>SS: CSR relay
+        SS-->>SA: signed SVID
+        SA-->>IS: SVID + trust bundle
+        Note over IS: mesh CA ready
+    end
+
+    rect rgb(255, 255, 210)
+        Note over Dev,EN: Phase E — Envoy SDS
+        EN->>IS: SDS request
+        IS->>SA: CSR relay
+        SA->>SS: CSR
+        SS-->>SA: signed SVID
+        SA-->>IS: cert + key
+        IS-->>EN: cert + key
+        Note over EN: Envoy ready
+    end
+
+    rect rgb(210, 255, 240)
+        Note over Dev,EN: Phase F — App 啟動 + mTLS
+        Dev->>EN: App container 啟動
+        EN-->>Dev: mTLS（spiffe://poc.internal/ns/&lt;ns&gt;/sa/&lt;sa&gt;）
+    end
+
+    Note over SA,IS: ↺ SVID rotate：Agent 在 TTL 前推新 SVID → istiod 觸發 SDS push → Envoy 自動更新
 ```
 
 ---
