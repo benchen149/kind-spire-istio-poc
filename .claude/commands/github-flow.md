@@ -120,4 +120,12 @@ gh pr close {number} --repo benchen149/kind-spire-istio-poc
 
 - `gh` CLI 需已完成登入（執行 `/setup-github-ssh` 完成初始設定）
 - base branch 預設為 `1-feat-develop`，若要 merge 到 `main` 請在 Step 1 指定
-- `1-feat-develop`、`main` 等長期 branch 不在自動刪除範圍內
+
+### 長期 Branch（永遠保留，不可刪除）
+
+| Branch | 說明 |
+|--------|------|
+| `main` | 穩定版本，GitHub branch protection 已啟用（`allow_deletions: false`、`allow_force_pushes: false`） |
+| `1-feat-develop` | 主要開發 branch，GitHub branch protection 已啟用（同上） |
+
+**自動刪除只針對格式為 `{issue-number}-{slug}` 的 feature branch，絕對不可對 `main` 或 `1-feat-develop` 執行刪除操作。**
