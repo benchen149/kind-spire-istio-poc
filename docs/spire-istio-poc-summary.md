@@ -131,8 +131,8 @@ sequenceDiagram
 
     rect rgb(248, 238, 255)
         Note over Dev,EN: Phase D - CSI socket ready
-        Note over SA: CSI Driver mounts agent.sock into pod volume
-        Note over EN: initContainer waits, socket ready
+        Note over SA,EN: CSI Driver mounts agent.sock into pod volume
+        Note over SA,EN: initContainer waits until socket ready
     end
 
     rect rgb(255, 255, 238)
