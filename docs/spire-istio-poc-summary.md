@@ -99,6 +99,7 @@ SPIRE Server（外部 VM）
 ```mermaid
 %%{init: {'theme': 'default', 'themeVariables': {'noteBkgColor': '#f5f5f5', 'noteTextColor': '#333', 'activationBkgColor': '#e8e8e8'}}}%%
 sequenceDiagram
+    autonumber
     participant Dev as Dev/k8s
     participant OPA as OPA Gatekeeper
     participant CM  as Controller Manager
