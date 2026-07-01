@@ -42,11 +42,10 @@ istio:  ## 安裝 Istio（SPIFFE CSI Driver + SDS 整合）
 
 deploy:  ## 部署測試 workload 並驗證
 	$(SCRIPTS)/06-deploy-test-workloads.sh
-	$(SCRIPTS)/08-deploy-validation-gateway.sh
-	$(SCRIPTS)/07-sanity-check.sh
+	$(SCRIPTS)/07-deploy-validation-gateway.sh
 
 check:  ## 執行 sanity check，驗證整體 PoC 架構是否正確
-	$(SCRIPTS)/07-sanity-check.sh
+	$(SCRIPTS)/08-sanity-check.sh
 
 clean:  ## 刪除 Kind cluster 並清理背景 process
 	-kind delete cluster --name spire-istio-poc
