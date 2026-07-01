@@ -131,8 +131,8 @@ sequenceDiagram
 
     rect rgb(240, 220, 255)
         Note over Dev,EN: Phase D - CSI socket ready
-        SA-->>EN: CSI Driver mounts agent.sock into workload volume
-        EN->>EN: initContainer waits for socket
+        Note over SA: CSI Driver mounts agent.sock into pod volume
+        Note over EN: initContainer waits for socket to appear
         Note over EN: workload-spiffe-uds/socket ready
     end
 
