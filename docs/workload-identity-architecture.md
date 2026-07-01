@@ -1,6 +1,6 @@
-# SPIFFE Identity 概念說明
+# Workload Identity 架構說明
 
-SPIFFE ID、SPIRE Entry、ClusterSPIFFEID 三個概念的關係與在本 PoC 中的實作方式。
+SPIFFE ID、SPIRE Entry、ClusterSPIFFEID、agent.sock 的概念與運作方式，以及 Istio 自管 CA 與 SPIRE 作為 CA 兩種架構的比較。
 
 ---
 
@@ -203,3 +203,24 @@ SPIRE Entry（存在 SPIRE Server）
 SPIFFE ID（嵌入 X.509 SVID）
   └── workload 的身份，在 mTLS 握手時出示給對方驗證
 ```
+
+---
+
+## Istio 自管 CA vs SPIRE 作為 CA
+
+| 比較項目 | 架構一：Istio 自管 CA（cacerts） | 架構二：SPIRE 作為 CA（本 PoC） |
+|---|---|---|
+| **Workload cert 簽發者** | istiod（載入 cacerts Secret） | SPIRE Server |
+| **xDS TLS 簽發者** | istiod（同一個 CA） | istiod self-signed（獨立，不受影響） |
+| **cacerts Secret** | 需要手動建立與管理 | 不需要 |
+| **SVID 輪替** | istiod 負責 | SPIRE Agent 自動推送，熱換不中斷 |
+| **信任範圍** | 限於單一 Istio mesh | 跨 k8s、VM、裸機皆可 |
+| **跨叢集身份驗證** | 需手動共享 root CA | SPIRE Federation（不共享私鑰） |
+| **非 k8s workload** | 不支援 | 支援（SPIRE 原生能力） |
+| **Istio 安裝複雜度** | 較高（需準備 cacerts） | 較低（不需 cacerts） |
+| **整體元件數** | 少（僅 Istio） | 多（+ SPIRE Server / Agent / Controller Manager / CSI Driver） |
+| **SPIRE Server HA** | 不適用 | Production 需要（PostgreSQL backend） |
+| **Helm gateway 部署** | 標準，無額外步驟 | 需要 post-renderer（chart 不原生支援 CSI volume） |
+| **debug 複雜度** | 低 | 較高（多一條 SPIRE → CSI → Envoy SDS 路徑） |
+| **外部系統驗證 workload 身份** | 困難（信任根不對外） | 可行（透過 SPIRE trust bundle） |
+| **適用情境** | 單叢集、純 k8s、維運資源有限 | 多叢集、混合環境、需要跨系統可驗證身份 |
