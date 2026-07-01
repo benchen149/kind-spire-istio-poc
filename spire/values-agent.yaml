@@ -1,0 +1,26 @@
+# SPIRE Agent (in-cluster) 連線至外部 SPIRE Server（本機 process，模擬外部 VM）
+# SPIRE Server 位址請見 scripts/02-install-spire-agent.sh 動態偵測的 kind docker network gateway IP
+global:
+  spire:
+    trustDomain: poc.internal
+    clusterName: kind-spire-istio-poc
+    namespaces:
+      create: false
+
+spire-server:
+  enabled: false
+
+spiffe-oidc-discovery-provider:
+  enabled: false
+
+spire-agent:
+  enabled: true
+  serviceAccount:
+    name: spire-agent
+  nodeAttestor:
+    k8sPsat:
+      enabled: true
+  workloadAttestors:
+    k8s:
+      enabled: true
+      skipKubeletVerification: true

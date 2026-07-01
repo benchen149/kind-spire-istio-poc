@@ -1,0 +1,22 @@
+# 只允許 payment-gateway-sa 呼叫 payment-core
+#
+# 注意：doc/spire-istio-poc-summary.md 原文的 AuthorizationPolicy 範例把
+# principal 寫成完整 URI "spiffe://<trustdomain>/ns/.../sa/..."，但 Istio
+# 官方規格（AuthorizationPolicy principals 欄位）不含 "spiffe://" 前綴，格式為
+# "<trustdomain>/ns/<ns>/sa/<sa>"。實測驗證：用完整 URI 會被 RBAC 判定
+# "matched_policy[none]" 而 403，即使 peer cert 的 SAN URI 完全相符。
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: payment-core-policy
+  namespace: payment
+spec:
+  selector:
+    matchLabels:
+      app: payment-core
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "poc.internal/ns/payment/sa/payment-gateway-sa"

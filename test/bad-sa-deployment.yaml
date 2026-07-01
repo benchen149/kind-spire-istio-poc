@@ -1,0 +1,29 @@
+# 用來測試 Layer 1（命名規則）Constraint 是否正確擋下不符合規則的 ServiceAccount。
+# 預期 kubectl apply 這個檔案會被 admission webhook 拒絕。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: payment-sa
+  namespace: payment
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-bad
+  namespace: payment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-bad
+  template:
+    metadata:
+      labels:
+        app: payment-bad
+        spiffe-managed: "true"
+    spec:
+      serviceAccountName: payment-sa
+      containers:
+        - name: app
+          image: curlimages/curl:8.10.1
+          command: ["sh", "-c", "sleep infinity"]

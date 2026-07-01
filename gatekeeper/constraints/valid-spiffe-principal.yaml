@@ -1,0 +1,11 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sValidSpiffePrincipal
+metadata:
+  name: valid-spiffe-principal
+spec:
+  match:
+    kinds:
+      - apiGroups: ["security.istio.io"]
+        kinds: ["AuthorizationPolicy"]
+  parameters:
+    trustDomain: "poc.internal"

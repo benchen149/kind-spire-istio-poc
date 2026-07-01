@@ -8,49 +8,59 @@
 |---|---|---|---|
 | SPIRE Server | Ubuntu VM（本機） | 1.9.6 | Central trust authority，簽發 SVID |
 | SPIRE Agent | Kind cluster DaemonSet | 1.9.6 | Node attestation，暴露 Workload API socket |
-| SPIRE Controller Manager | Kind in-cluster（spire namespace） | 1.9.6 | 自動管理 SPIRE registration entry 生命週期 |
+| SPIRE Controller Manager | 與 SPIRE Server 同機（見「SPIRE entry 管理方式」的部署位置說明） | 0.6.6 | 自動管理 SPIRE registration entry 生命週期 |
+| SPIFFE CSI Driver | Kind cluster DaemonSet（隨 SPIRE Agent chart 安裝） | — | 將 SPIRE Agent socket 以 CSI ephemeral volume 掛給各 workload |
 | ClusterSPIFFEID CRD | Kind in-cluster | — | 定義 entry 自動建立規則（template + selector） |
 | Kubernetes | Kind | 1.34 | 容器平台 |
 | Istio | Kind in-cluster | 1.29.4 | Service mesh，native sidecar 預設啟用 |
-| istiod | istio-system namespace | 1.29.4 | RA 角色，透過 SPIRE socket 取 SVID，下發 SDS |
-| Envoy sidecar | 每個 workload pod | Istio 內建 | 透過 SDS 從 istiod 取 cert，執行 mTLS |
+| istiod | istio-system namespace | 1.29.4 | 憑證維持 Istio 預設 self-signed，不涉入 SPIRE（見下方「Istio × SPIRE 整合方式」說明） |
+| Envoy sidecar | 每個 workload pod | Istio 內建 | 透過 SPIFFE CSI Driver 直連 SPIRE Agent 的 SDS 取 cert，執行 mTLS |
 | OPA Gatekeeper | Kind in-cluster | v3.18.2 | 強制 SA 命名規則、SPIRE label、principal 格式驗證 |
+
+> **實作與本文件初版的差異**：本文件初版假設 istiod 可透過
+> `PILOT_CERT_PROVIDER=spiffe` 取得自身 SVID 成為 mesh CA/RA，但實測與查證
+> Istio 原始碼後確認這個設定值並不存在。真正落地可行、且有 Istio 官方
+> 實測範例的整合方式是「Envoy sidecar 透過 SPIFFE CSI Driver 直連 SPIRE
+> Agent 拿憑證，完全繞過 istiod」，詳見「Istio × SPIRE 整合方式」一節。
+> 完整可執行的實作與腳本見 repo 根目錄 `kind/`、`spire-server/`、`spire/`、
+> `istio/`、`gatekeeper/`、`test/`、`scripts/`。
 
 ---
 
 ## 架構圖（文字版）
 
 ```
-Ubuntu VM
-└── SPIRE Server
-      ├── bind 0.0.0.0:8081
-      ├── DataStore: sqlite3（PoC）
-      ├── NodeAttestor: k8s_sat（kubeconfig → Kind API）
-      └── 簽發 SVID
+Ubuntu VM（本機／PoC 環境以 host process 模擬）
+├── SPIRE Server
+│     ├── bind 0.0.0.0:8081（PoC 實測環境因 port 衝突改用 8082，見 spire-server/server.conf）
+│     ├── DataStore: sqlite3（PoC）
+│     ├── NodeAttestor: k8s_psat（kubeconfig → Kind API，見下節說明）
+│     └── 簽發 SVID
+│
+└── SPIRE Controller Manager
+      ├── 與 SPIRE Server 同機，透過本地 Unix Domain Socket 通訊
+      │     （上游 spire-controller-manager 僅支援此模式，不支援跨網路
+      │     連線遠端 SPIRE Server，見「SPIRE Controller Manager 部署位置」）
+      ├── 透過 kubeconfig 遠端 watch Kind cluster 的 ClusterSPIFFEID / pod / namespace
+      └── 自動向 SPIRE Server 建立 / 刪除 entry
 
 Kind cluster（k8s 1.34）
 ├── spire namespace
-│     ├── SPIRE Agent (DaemonSet)
-│     │     ├── hostPID: true
-│     │     ├── k8s_sat node attestor
-│     │     └── /run/spire/sockets/agent.sock（hostPath）
-│     │
-│     └── SPIRE Controller Manager
-│           ├── watch ClusterSPIFFEID CRD
-│           ├── watch pod / namespace label
-│           └── 自動向外部 SPIRE Server 建立 / 刪除 entry
+│     └── SPIRE Agent (DaemonSet)
+│           ├── hostPID: true
+│           ├── k8s_psat node attestor（k8s_sat 的官方後繼者，見下節說明）
+│           └── /run/spire/agent-sockets/spire-agent.sock（hostPath，
+│                 透過 SPIFFE CSI Driver 以 csi.spiffe.io 掛載給各 workload）
 │
 ├── istio-system namespace
-│     └── istiod
-│           ├── PILOT_CERT_PROVIDER=spiffe
-│           ├── mount: /run/spire/sockets（read-only）
-│           ├── initContainer: wait-for-spire-socket
-│           └── 透過 Workload API 取 SVID → 作為 mesh CA
+│     └── istiod（憑證維持 Istio 預設 self-signed，不涉入 SPIRE）
 │
 └── workload namespace（label: spiffe-managed=true）
-      └── pod（label: spiffe-managed=true）
+      └── pod（label: spiffe-managed=true,
+              annotation: inject.istio.io/templates: "sidecar,spire"）
             ├── Envoy sidecar（native initContainer）
-            │     └── cert via SDS ← istiod
+            │     └── cert via SDS ← SPIRE Agent
+            │           （經 SPIFFE CSI Driver 直連，繞過 istiod 憑證機制）
             └── App container
 ```
 
@@ -60,10 +70,9 @@ Kind cluster（k8s 1.34）
 SPIRE Server（外部 VM）
   → SPIRE Agent node attestation 成功
     → agent.sock 建立
-      → istiod initContainer 通過
-        → istiod 透過 Workload API 取得 SVID
-          → Envoy sidecar SDS 取得 cert
-            → App container 啟動
+      → wait-for-spire-socket initContainer 通過（等待 CSI 掛載的 socket 出現）
+        → Envoy sidecar 透過 SPIFFE CSI Driver 直連 SPIRE Agent，SDS 取得 cert
+          → App container 啟動
 ```
 
 ### 完整時序圖
@@ -72,12 +81,20 @@ SPIRE Server（外部 VM）
 
 | Phase | 說明 | 主要元件 |
 |---|---|---|
-| A — OPA Admission | Deployment apply 時三層驗證 | OPA Gatekeeper |
+| A — OPA Admission | Deployment apply 時四層驗證 | OPA Gatekeeper |
 | B — Entry 自動建立 | Controller Manager 偵測 pod、建立 SPIRE entry | Controller Manager → SPIRE Server |
 | C — Node Attestation | SPIRE Agent 啟動時驗證 node 身份 | SPIRE Agent → SPIRE Server → k8s TokenReview |
-| D — istiod SVID | istiod 等待 socket、取得自身 SVID 作為 mesh CA | istiod → SPIRE Agent → SPIRE Server |
-| E — Envoy SDS | Envoy 透過 SDS 取得 cert | Envoy → istiod → SPIRE Agent → SPIRE Server |
+| D — CSI socket 就緒 | wait-for-spire-socket initContainer 等待 SPIFFE CSI Driver 掛載的 socket 出現 | CSI Driver → SPIRE Agent |
+| E — Envoy SDS | Envoy 透過 SPIFFE CSI Driver 直連 SPIRE Agent 取得 cert（不經過 istiod） | Envoy → SPIRE Agent → SPIRE Server |
 | F — App 啟動 + mTLS | App container 啟動，所有流量由 Envoy mTLS 保護 | Envoy + App |
+
+> 注意：實測確認 Istio 並不存在 `PILOT_CERT_PROVIDER=spiffe` 這個設定值
+> （Istio 原始碼 `pkg/config/constants/constants.go` 中合法值僅有
+> `istiod` / `kubernetes` / `k8s.io/*` / `custom` / `none`）。istiod 本身
+> 憑證全程維持 Istio 預設 self-signed，不涉入 SPIRE；真正生效的整合方式
+> 是每個 workload 的 Envoy sidecar 透過 SPIFFE CSI Driver 直接向 SPIRE
+> 要憑證，詳見官方範例 [istio/istio repo
+> samples/security/spire/](https://github.com/istio/istio/tree/master/samples/security/spire)。
 
 ```mermaid
 sequenceDiagram
@@ -86,7 +103,6 @@ sequenceDiagram
     participant CM  as Controller Manager
     participant SS  as SPIRE Server
     participant SA  as SPIRE Agent
-    participant IS  as istiod
     participant EN  as Envoy
 
     rect rgb(220, 235, 255)
@@ -107,30 +123,24 @@ sequenceDiagram
 
     rect rgb(255, 240, 210)
         Note over Dev,EN: Phase C — Node Attestation
-        SA->>SS: k8s_sat token
+        SA->>SS: k8s_psat token
         SS->>SA: TokenReview（via kubeconfig）
         SS-->>SA: attested + trust bundle
         Note over SA: agent.sock 建立
     end
 
     rect rgb(240, 220, 255)
-        Note over Dev,EN: Phase D — istiod SVID
-        IS->>SA: wait-for-spire-socket（initContainer）
-        IS->>SA: Workload API — CSR
-        SA->>SS: CSR relay
-        SS-->>SA: signed SVID
-        SA-->>IS: SVID + trust bundle
-        Note over IS: mesh CA ready
+        Note over Dev,EN: Phase D — CSI socket 就緒
+        EN->>SA: wait-for-spire-socket（initContainer，等待 CSI 掛載的 socket）
+        Note over EN: /run/secrets/workload-spiffe-uds/socket 出現
     end
 
     rect rgb(255, 255, 210)
-        Note over Dev,EN: Phase E — Envoy SDS
-        EN->>IS: SDS request
-        IS->>SA: CSR relay
-        SA->>SS: CSR
+        Note over Dev,EN: Phase E — Envoy SDS（不經過 istiod）
+        EN->>SA: SDS request（透過 SPIFFE CSI Driver 直連 agent.sock）
+        SA->>SS: CSR relay
         SS-->>SA: signed SVID
-        SA-->>IS: cert + key
-        IS-->>EN: cert + key
+        SA-->>EN: cert + key
         Note over EN: Envoy ready
     end
 
@@ -140,7 +150,7 @@ sequenceDiagram
         EN-->>Dev: mTLS（spiffe://poc.internal/ns/&lt;ns&gt;/sa/&lt;sa&gt;）
     end
 
-    Note over SA,IS: ↺ SVID rotate：Agent 在 TTL 前推新 SVID → istiod 觸發 SDS push → Envoy 自動更新
+    Note over SA,EN: ↺ SVID rotate：Agent 在 TTL 前推新 SVID → CSI socket push → Envoy 自動更新
 ```
 
 ---
@@ -192,7 +202,7 @@ spec:
   spiffeIDTemplate: >-
     spiffe://poc.internal
     /ns/{{ .PodMeta.Namespace }}
-    /sa/{{ .PodMeta.ServiceAccountName }}
+    /sa/{{ .PodSpec.ServiceAccountName }}
   podSelector:
     matchLabels:
       spiffe-managed: "true"
@@ -205,6 +215,10 @@ spec:
 
 路徑 template 維持 Istio 預設格式，不客製化。
 Controller Manager 自動偵測 pod 建立 / 刪除，同步向外部 SPIRE Server 建立或清理 entry。
+
+> `.PodSpec.ServiceAccountName`：實測確認 SPIRE Controller Manager 的
+> template 欄位是 `PodSpec.ServiceAccountName`（不是 `PodMeta.ServiceAccountName`，
+> ServiceAccountName 屬於 pod 的 spec 而非 metadata）。
 
 **需要在 namespace 與 pod 加 label：**
 
@@ -220,18 +234,28 @@ spec:
         spiffe-managed: "true"
 ```
 
-**Controller Manager 安裝（只裝 controller，SPIRE Server 在外部）：**
+**SPIRE Controller Manager 部署位置：實測發現與原設計不同**
+
+原設計預期 Controller Manager 跑在 Kind in-cluster、遠端連線外部 SPIRE Server。
+實際查證 [spire-controller-manager](https://github.com/spiffe/spire-controller-manager)
+官方文件與原始碼後發現：它**僅支援與 SPIRE Server 同機、透過本地 Unix Domain
+Socket 通訊**，不支援任何形式的跨網路連線遠端 Server（沒有
+`spireServerAddress` 這類參數）。因此本 PoC 改為：
+
+- Controller Manager 與 SPIRE Server 跑在**同一台 host**（PoC 環境即模擬「外部 VM」的那台機器），共用本地 socket
+- Controller Manager 透過標準 kubeconfig（`KUBECONFIG` 環境變數）**遠端**監控 Kind cluster 的 `ClusterSPIFFEID` / Pod / Namespace，這是 controller-runtime 的標準能力，不需要 Controller Manager 本身跑在該叢集裡
+- 因此 Controller Manager 的**行為**（entry 自動建立/清理）與原設計完全相同，差異只在**部署位置**
 
 `ClusterSPIFFEID` 的 CRD apiVersion 為 `spire.spiffe.io/v1alpha1`（目前唯一版本，從 SPIRE v1.0 起穩定）。
-CRD 必須**先於** Controller Manager 安裝，否則 Helm 會找不到 `ClusterSPIFFEID` kind 而失敗。
+CRD 必須**先於** Controller Manager 安裝，否則會找不到 `ClusterSPIFFEID` kind 而失敗。
 
 ```bash
-# Step 1：先裝 CRD chart（獨立安裝）
+# Step 1：在 Kind cluster 裝 CRD chart
 helm repo add spiffe https://spiffe.github.io/helm-charts-hardened
 helm repo update
 
 helm upgrade --install --create-namespace \
-  -n spire spire-crds spiffe/spire-crds
+  -n spire spire-crds spiffe/spire-crds --version 0.5.0
 
 # 確認 CRD 建立完成再繼續
 kubectl api-resources --api-group spire.spiffe.io
@@ -240,15 +264,20 @@ kubectl api-resources --api-group spire.spiffe.io
 # clusterfederatedtrustdomains  spire.spiffe.io/v1alpha1   false   ClusterFederatedTrustDomain
 # clusterstaticentries          spire.spiffe.io/v1alpha1   false   ClusterStaticEntry
 
-# Step 2：再裝 Controller Manager（SPIRE Server 在外部 VM，不裝 server）
-helm install spire spiffe/spire \
-  --namespace spire \
-  --create-namespace \
-  --set "spire-server.enabled=false" \
-  --set "spire-controller-manager.enabled=true" \
-  --set "spire-controller-manager.spireServerAddress=172.17.0.1:8081" \
-  --set "global.trustDomain=poc.internal"
+# Step 2：在 SPIRE Server 所在的 host 上，用官方 image 啟動 Controller Manager
+# （設定檔內容見 spire/controller-manager-config.yaml）
+docker run -d --name spire-controller-manager \
+  --network host \
+  -e ENABLE_WEBHOOKS=false \
+  -e KUBECONFIG=/kubeconfig \
+  -v "$(pwd)/spire/controller-manager-config.yaml:/config.yaml:ro" \
+  -v /opt/spire/conf/server/kubeconfig:/kubeconfig:ro \
+  -v /tmp/spire-server/private:/tmp/spire-server/private \
+  ghcr.io/spiffe/spire-controller-manager:0.6.6 \
+  --config /config.yaml
 ```
+
+完整可執行版本見 `scripts/03-start-controller-manager.sh`。
 
 **1 SA per team/function 下的 entry 數量：**
 
@@ -275,36 +304,64 @@ spec:
   rules:
     - from:
         - source:
+            # 注意：Istio AuthorizationPolicy 的 principals 官方格式為
+            # "<trustdomain>/ns/<ns>/sa/<sa>"，不含 "spiffe://" 前綴。
+            # 實測確認寫成完整 URI 會被 RBAC 引擎判定
+            # matched_policy[none] 而拒絕存取，即使憑證 SAN 完全相符。
             principals:
-              - "spiffe://corp.internal/ns/payment/sa/payment-core-sa"
+              - "corp.internal/ns/payment/sa/payment-core-sa"
 ```
 
 ---
 
 ## Node Attestation 方式
 
+> **plugin 更正**：本文件初版使用 `k8s_sat`，但實測時 SPIRE 1.9.6 server
+> 啟動即警告該 plugin 已棄用（deprecated），官方後繼者是 `k8s_psat`
+> （projected/bound service account token）。官方 Helm chart（`spiffe/spire`）
+> 的 agent 端也只原生支援切換 `k8s_psat`，沒有 `k8s_sat` 的開關。
+> 因此本 PoC 全面改用 `k8s_psat`，語意與「PoC 用 kubeconfig / Production
+> 用 OIDC」的設計決策完全相同，只是 plugin 名稱不同。
+
 ### PoC 環境（Kind + 同一台機器）
 
-SPIRE Server 透過 kubeconfig 打 Kind API Server（`127.0.0.1:6443`）做 `TokenReview`：
+SPIRE Server 透過 kubeconfig 打 Kind API Server做 `TokenReview`：
 
 ```
-SPIRE Agent → SA token → SPIRE Server → Kind API TokenReview → attestation 完成
+SPIRE Agent → PSAT (projected token) → SPIRE Server → Kind API TokenReview → attestation 完成
 ```
 
 原因：Kind 不開放 OIDC discovery endpoint，只能用 kubeconfig 方式。
+
+```hcl
+# server 端（實測可行版本，見 spire-server/server.conf）
+NodeAttestor "k8s_psat" {
+  plugin_data {
+    clusters = {
+      "kind-spire-istio-poc" = {
+        service_account_allow_list = ["spire:spire-agent"]
+        audience                   = ["spire-server"]
+        kube_config_file           = "/opt/spire/conf/server/kubeconfig"
+      }
+    }
+  }
+}
+```
 
 ### Production 環境（真實 k8s cluster）
 
 改用 OIDC Discovery，不需要 kubeconfig：
 
 ```hcl
-NodeAttestor "k8s_sat" {
+NodeAttestor "k8s_psat" {
   plugin_data {
     clusters = {
       "c1" = {
-        service_account_allow_list      = ["spire:spire-agent"]
-        use_token_review_api_validation = false
-        audience                        = ["spire-server"]
+        service_account_allow_list = ["spire:spire-agent"]
+        audience                   = ["spire-server"]
+        # 省略 kube_config_file：SPIRE Server 跑在叢集內時可用 in-cluster
+        # ServiceAccount 直接呼叫 TokenReview API，或改用 OIDC Discovery
+        # 驗證 PSAT 簽章，不需要额外的 kubeconfig
       }
     }
   }
@@ -398,43 +455,127 @@ spire-server entry show
 
 ---
 
-## PILOT_CERT_PROVIDER 說明
+## Istio × SPIRE 整合方式
+
+> **本節取代文件初版的「PILOT_CERT_PROVIDER 說明」**。實測 + 查證 Istio
+> 1.29.4 原始碼（`pkg/config/constants/constants.go`）確認 `PILOT_CERT_PROVIDER`
+> 合法值只有 `istiod` / `kubernetes` / `k8s.io/<signer>` / `custom` / `none`，
+> **沒有 `spiffe` 這個值**。「istiod 取得自身 SVID 變成 mesh RA」這個設計
+> 在目前 Istio 並不存在，以下是實測驗證過、真正可行的整合方式。
+
+### PILOT_CERT_PROVIDER（istiod 自身憑證，與 SPIRE 無關）
 
 | 值 | CA 來源 | cacerts Secret 需要？ | 說明 |
 |---|---|---|---|
-| `istiod`（預設，無 cacerts） | istiod self-signed | 不需要 | istiod 自動產生 root CA，完全自治 |
+| `istiod`（預設，無 cacerts，本 PoC 採用） | istiod self-signed | 不需要 | istiod 自動產生 root CA，完全自治 |
 | `istiod` + cacerts Secret | 你提供的外部 CA（BYOCA） | **需要** | istiod 載入 cacerts 裡的 CA 簽發 cert |
-| `spiffe`（本 PoC） | 外部 SPIRE Server | 不需要（設了也無效） | CA 責任完全移交 SPIRE，istiod 變成 RA 角色 |
 | `kubernetes` | k8s 內建 CA | 不需要 | 透過 k8s CSR API 取 cert |
 
-### `istiod` 模式的兩種子情境
+本 PoC 中 istiod 的憑證維持**預設值**（`istiod` self-signed），完全不受
+SPIRE 影響——因為 istiod 自身憑證只用來保護 istiod ↔ Envoy 之間的 XDS
+控制平面通道，跟「workload 之間的 mTLS 身份要由誰簽發」是兩件事。
+
+### 真正的 SPIRE 整合點：SPIFFE CSI Driver + SDS
+
+Istio 官方支援、且有實測範例（[istio/istio repo
+samples/security/spire/](https://github.com/istio/istio/tree/master/samples/security/spire)）
+的整合方式，是讓**每個 workload 的 Envoy sidecar 直接向 SPIRE 要憑證**，
+完全繞過 istiod：
 
 ```
-情境 1：純預設（無 cacerts Secret）
-  istiod 啟動 → 自動產生 self-signed root CA
-  → trust root = istiod 自己
-  → cacerts 不需要
-
-情境 2：BYOCA（有 cacerts Secret）
-  istiod 啟動 → 偵測到 cacerts Secret 存在
-  → 載入你提供的 intermediate CA 或 root CA
-  → 用這個 CA 簽發所有 workload cert
-  → cacerts 是必要的
+Envoy sidecar
+  → 掛載 SPIFFE CSI Driver（csi.spiffe.io）提供的 ephemeral volume
+  → volume 底層是 SPIRE Agent 的 Workload API socket 的 bind mount
+  → Envoy 用 SDS 協定透過這個 socket 直接向 SPIRE Agent 要憑證
+  → SPIRE Agent 向 SPIRE Server 取得 signed SVID
+  → 憑證 Issuer/Subject 為 "O = SPIRE"（而非 istiod 的 self-signed CA）
 ```
 
-### 本 PoC 採用 `spiffe` 模式
+**IstioOperator 設定**（自訂 sidecar injection template，只有加上
+annotation 的 workload 才會套用）：
 
-- `PILOT_CERT_PROVIDER=spiffe`：istiod 完全放棄 self-signed CA
-- istiod 透過 SPIRE Agent socket 取得自身 SVID，作為 mesh RA
-- `cacerts` Secret **不需要建立**，已建立的要先刪除：
+```yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  namespace: istio-system
+spec:
+  profile: demo
+  meshConfig:
+    trustDomain: poc.internal
+  values:
+    sidecarInjectorWebhook:
+      templates:
+        spire: |
+          spec:
+            # Istio 1.29 + k8s 1.29 以上預設啟用 native sidecar
+            # （istio-proxy 是 initContainer），所以要 patch initContainers
+            # 而非 containers，否則會跟 sidecar template 產生衝突。
+            initContainers:
+            - name: istio-proxy
+              volumeMounts:
+              - name: workload-socket
+                mountPath: /run/secrets/workload-spiffe-uds
+                readOnly: true
+            volumes:
+              - name: workload-socket
+                csi:
+                  driver: "csi.spiffe.io"
+                  readOnly: true
+```
+
+**Workload 要 opt-in**才會套用這個 template（不是 mesh-wide 強制）：
+
+```yaml
+metadata:
+  labels:
+    spiffe-managed: "true"        # 給 SPIRE ClusterSPIFFEID 用，建立 entry
+  annotations:
+    inject.istio.io/templates: "sidecar,spire"   # 套用上面自訂的 spire template
+```
+
+**驗證憑證確實由 SPIRE 簽發**（`istioctl proxy-config secret` +
+`openssl x509`）：
 
 ```bash
-# 確認沒有殘留的 cacerts（若之前測試過 BYOCA 模式）
-kubectl delete secret cacerts -n istio-system --ignore-not-found
+istioctl pc secret -n payment "$POD" -o json | \
+  python3 -c "import json,sys,base64; d=json.load(sys.stdin); \
+    print(base64.b64decode(d['dynamicActiveSecrets'][0]['secret']['tlsCertificate']['certificateChain']['inlineBytes']).decode())" \
+  | openssl x509 -text -noout | grep -E "Issuer|Subject|URI"
 
-# 直接套用 IstioOperator 即可
-istioctl install -f istio-operator.yaml -y
+# 預期輸出：
+#   Issuer: C = US, O = SPIFFE, ...
+#   Subject: C = US, O = SPIRE
+#   URI:spiffe://poc.internal/ns/payment/sa/payment-gateway-sa
 ```
+
+### 重要實測發現：PERMISSIVE mTLS 模式下 AuthorizationPolicy 會誤判拒絕
+
+即使 Envoy 已透過 SPIRE 簽發的憑證完成 TLS handshake、debug log 也顯示
+`uriSanPeerCertificate` 與 `AuthorizationPolicy` 設定的 principal 完全相符，
+在預設 `PERMISSIVE` mTLS 模式下仍會出現：
+
+```
+rbac_access_denied_matched_policy[none]
+```
+
+改用 `STRICT` 模式後才正確生效（HTTP 200）：
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: payment
+spec:
+  mtls:
+    mode: STRICT
+```
+
+**結論：透過 SPIFFE CSI Driver 取得 SPIRE 憑證的 workload，所在 namespace
+必須設定 `STRICT` mTLS，`AuthorizationPolicy` 的 RBAC principal 比對才會
+正確生效。** 完整可執行版本見 `istio/istio-operator.yaml`、
+`test/peer-authentication.yaml`。
 
 ---
 
@@ -445,9 +586,9 @@ istioctl install -f istio-operator.yaml -y
 | 統一 trust authority | 所有 mTLS 身份由同一個外部 SPIRE Server 背書 |
 | 跨系統身份可驗證 | 外部服務可透過 SPIRE trust bundle 驗證 SVID |
 | SA 數量可控 | 1 SA per team/function，不會隨 Deployment 線性增長 |
-| Istio 官方支援路徑 | `PILOT_CERT_PROVIDER=spiffe` 在 1.29.4 完全穩定 |
+| Istio 官方支援路徑 | SPIFFE CSI Driver + SDS 整合方式在 1.29.4 已有官方實測範例 |
 | SPIFFE ID 標準格式 | 維持 Istio 預設路徑，與生態系工具相容 |
-| AuthorizationPolicy 正常運作 | 不繞過 istiod，policy 執行無灰色地帶 |
+| AuthorizationPolicy 正常運作 | 憑證 SAN 符合 Istio 預設格式，principal 比對無灰色地帶（需搭配 STRICT mTLS，見「Istio × SPIRE 整合方式」） |
 | 未來擴展性 | 架構可平滑升級，不被鎖死（見下方說明） |
 
 ### 未來擴展性說明
@@ -502,7 +643,7 @@ trafficPolicy:
 
 | 缺點 | 說明 |
 |---|---|
-| SPIFFE ID 路徑無法客製化 | istiod CSR 格式固定，SPIRE Server 只能被動簽發 |
+| SPIFFE ID 路徑無法客製化 | Envoy 的 SAN 驗證邏輯 hardcode 要求 `/ns/<ns>/sa/<sa>` 格式，SPIRE Server 只能被動配合 |
 | 顆粒度上限是 SA 層級 | 同一 SA 的不同 Deployment 無法在 policy 層區分 |
 | SPIRE Server 是額外元件 | 需要獨立維護，不在 k8s 內部 |
 | PoC 用 sqlite3 | 不適合 production，需換 PostgreSQL |
@@ -516,11 +657,13 @@ trafficPolicy:
 |---|---|---|---|
 | SPIRE Server SPOF | 高 | 掛掉則所有新 pod 無法啟動（native sidecar） | Production 需 HA（PostgreSQL + 多台 VM） |
 | SVID TTL 到期 | 中 | Server 掛超過 TTL（預設 1hr），已跑 pod 也受影響 | 調長 TTL 或確保 SPIRE HA |
-| agent.sock 不存在 | 高 | istiod initContainer 卡住，所有 pod 無法啟動 | wait-for-spire-socket initContainer |
+| SPIFFE CSI socket 不存在 | 高 | wait-for-spire-socket initContainer 卡住，該 pod 無法啟動 | 確保 SPIFFE CSI Driver DaemonSet 先於 workload 就緒 |
 | trust domain 設錯 | 高 | 設定後無法更改，改了要重建所有 SVID | PoC 前想清楚命名，production 用前確認 |
 | Controller Manager 與 SPIRE Server 連線中斷 | 中 | 新 pod 無法自動建 entry → 取不到 SVID | 確保 Controller Manager → SPIRE Server 網路可達，加監控 |
 | sqlite3 資料遺失 | 中（PoC） | 所有 entry 消失，需重建 | PoC 可接受；因 Controller Manager 自動 reconcile，切換 PostgreSQL 後 entry 會自動重建 |
-| Istio 升級相容性 | 低 | `PILOT_CERT_PROVIDER=spiffe` 為穩定 API | 升級前確認 release notes |
+| PERMISSIVE mTLS 下 AuthorizationPolicy 誤判拒絕 | 中（PoC 實測發現） | SPIRE 簽發憑證的 workload 在 PERMISSIVE 模式下，RBAC 引擎可能判定 `matched_policy[none]` 而 403，即使憑證 SAN 完全相符 | 該 namespace 一律設定 `PeerAuthentication` STRICT，見「Istio × SPIRE 整合方式」 |
+| spire-controller-manager 不支援遠端 Server | 中（PoC 實測發現） | 官方僅支援與 SPIRE Server 同機 UDS 通訊，誤以為可跨網路連線會導致部署卡住 | Controller Manager 與 SPIRE Server 同機部署，透過 kubeconfig 遠端管理叢集資源 |
+| Istio 升級相容性 | 低 | Istio 官方 SPIFFE CSI Driver 整合方式（`samples/security/spire/`）為社群長期維護的範例 | 升級前確認 release notes |
 
 ---
 
@@ -543,10 +686,13 @@ trafficPolicy:
 |---|---|---|
 | SPIFFE ID 顆粒度 | 1 SA per team/function | SA 數量可控，完全走官方支援路徑 |
 | OPA Gatekeeper 命名策略 | pattern 取代白名單 | 全域一筆 Constraint，不隨 namespace 增長 |
-| SPIFFE ID 路徑 | Istio 預設格式 | 不繞過 istiod，AuthorizationPolicy 無灰色地帶 |
+| SPIFFE ID 路徑 | Istio 預設格式（`/ns/<ns>/sa/<sa>`） | Envoy SAN 驗證邏輯 hardcode 此格式，走官方支援路徑、AuthorizationPolicy 無灰色地帶 |
 | entry 管理 | SPIRE Controller Manager + ClusterSPIFFEID | 自動管理 entry 生命週期，消除手動操作風險 |
 | SPIFFE ID template | Istio 預設格式（不客製化） | 維持官方支援路徑，AuthorizationPolicy 無灰色地帶 |
-| node attestation | kubeconfig（PoC）/ OIDC（production） | Kind 不支援 OIDC，production 改用更安全方式 |
+| node attestation plugin | k8s_psat（PoC 與 production 皆同） | k8s_sat 已棄用，官方 Helm chart 只原生支援 k8s_psat |
+| node attestation 驗證方式 | kubeconfig（PoC）/ OIDC（production） | Kind 不支援 OIDC，production 改用更安全方式 |
+| Controller Manager 部署位置 | 與 SPIRE Server 同機（PoC） | 上游工具僅支援本地 UDS，不支援遠端連線 SPIRE Server |
+| Istio × SPIRE 憑證整合 | SPIFFE CSI Driver + SDS（workload 層級 opt-in） | `PILOT_CERT_PROVIDER=spiffe` 不存在；此為 Istio 官方實測支援的整合方式 |
 | trust domain | `poc.internal` | PoC 隔離，不影響未來 production 命名 |
 
 ---
@@ -581,6 +727,10 @@ spec:
         kind: K8sValidServiceAccountName
       validation:
         openAPIV3Schema:
+          # 實測：Gatekeeper v3.18.2 對 CRD schema 驗證較嚴格，
+          # properties[spec].properties[parameters] 需明確標註 type: object，
+          # 否則 apply 會被 admission webhook 拒絕。
+          type: object
           properties:
             pattern:
               type: string
@@ -741,11 +891,15 @@ spec:
         kind: K8sValidSpiffePrincipal
       validation:
         openAPIV3Schema:
+          type: object
           properties:
             trustDomain:
               type: string
   targets:
     - target: admission.k8s.gatekeeper.sh
+      # 注意：pattern 不含 "spiffe://" 前綴，因為 Istio AuthorizationPolicy
+      # 的 source.principals 官方格式是 "<trustdomain>/ns/<ns>/sa/<sa>"，
+      # 不是完整 URI（實測驗證，見「Istio × SPIRE 整合方式」一節）。
       rego: |
         package k8svalidspiffeprincipal
 
@@ -753,9 +907,9 @@ spec:
           rule := input.review.object.spec.rules[_]
           principal := rule.from[_].source.principals[_]
           trust_domain := input.parameters.trustDomain
-          pattern := sprintf("^spiffe://%v/ns/[^/]+/sa/[^/]+$", [trust_domain])
+          pattern := sprintf("^%v/ns/[^/]+/sa/[^/]+$", [trust_domain])
           not regex.match(pattern, principal)
-          msg := sprintf("principal '%v' 不符合 SPIFFE ID 格式 spiffe://%v/ns/.../sa/...", [principal, trust_domain])
+          msg := sprintf("principal '%v' 不符合 SPIFFE ID 格式 %v/ns/.../sa/...", [principal, trust_domain])
         }
 ---
 apiVersion: constraints.gatekeeper.sh/v1beta1

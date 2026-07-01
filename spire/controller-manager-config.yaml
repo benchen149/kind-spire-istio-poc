@@ -1,0 +1,22 @@
+# SPIRE Controller Manager 設定
+# 依 GitHub Issue 討論結果，spire-controller-manager 官方僅支援與 SPIRE Server
+# 同機透過本地 Unix Domain Socket 通訊，不支援跨網路連線遠端 Server。
+# 因此本 PoC 將 Controller Manager 與 SPIRE Server 一起跑在同一台 host 上，
+# 透過 kubeconfig（KUBECONFIG 環境變數）遠端監控 Kind cluster 的資源。
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ControllerManagerConfig
+metrics:
+  bindAddress: 127.0.0.1:8091
+health:
+  healthProbeBindAddress: 0.0.0.0:8092
+leaderElection:
+  leaderElect: false
+clusterName: kind-spire-istio-poc
+logLevel: info
+trustDomain: poc.internal
+spireServerSocketPath: /tmp/spire-server/private/api.sock
+ignoreNamespaces:
+  - kube-system
+  - kube-public
+  - local-path-storage
+  - gatekeeper-system
