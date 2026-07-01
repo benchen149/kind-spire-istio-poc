@@ -199,12 +199,15 @@ check "istiod pod 執行中" \
 
 if [[ -x "$ISTIOCTL" ]]; then
   # istio-validation namespace 內所有 spiffe-managed=true 的 Running pod
-  SPIFFE_PODS=$(kubectl get pod -n istio-validation -l spiffe-managed=true \
+  # 排除 istio=ingressgateway：gateway 採 lazy SVID，無流量時 active secret 為空，
+  # 由 Section 14 透過 CSI volume / CA_ADDR / SPIRE entry 另行驗證
+  SPIFFE_PODS=$(kubectl get pod -n istio-validation \
+    -l 'spiffe-managed=true,istio notin (ingressgateway)' \
     --field-selector=status.phase=Running \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
 
   if [[ -z "$SPIFFE_PODS" ]]; then
-    fail "istio-validation namespace 中找不到 spiffe-managed=true 且 Running 的 pod"
+    fail "istio-validation namespace 中找不到 spiffe-managed=true（非 gateway）且 Running 的 pod"
   else
     while IFS= read -r POD; do
       # 從 Envoy active secret 解出 cert chain，同時取 Issuer 和 URI SAN
