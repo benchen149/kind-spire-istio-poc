@@ -1,4 +1,67 @@
-# [PoC] External SPIRE Server — 架構總覽
+# [PoC] SPIRE × Istio mTLS — Kind 本地驗證環境
+
+---
+
+## Repo 目錄結構
+
+```
+kind-spire-istio-poc/
+├── Makefile                        # 一鍵啟動：make all / make check / make clean
+├── versions.env                    # 所有元件版本集中管理
+│
+├── kind/
+│   └── kind-config.yaml            # Kind cluster 設定（單節點）
+│
+├── spire-server/
+│   └── server.conf                 # SPIRE Server 設定（host process，模擬外部 VM）
+│
+├── spire/
+│   ├── values-agent.yaml           # SPIRE Agent Helm chart values
+│   ├── controller-manager-config.yaml  # SPIRE Controller Manager 設定
+│   └── cluster-spiffeid.yaml       # ClusterSPIFFEID CRD（自動建立 SPIRE entry 規則）
+│
+├── istio/
+│   ├── istio-operator.yaml         # IstioOperator（SPIFFE CSI Driver + ingress gateway 整合）
+│   └── validation-gateway/
+│       ├── values.yaml             # Helm values（pilotCertProvider=istiod 保留 xDS CA mount）
+│       ├── post-renderer.sh        # Helm post-renderer（CSI volume / env / SA rename patch）
+│       └── patch-csi-volume.yaml   # （備用，實際由 post-renderer 處理）
+│
+├── gatekeeper/
+│   ├── constraint-templates/       # OPA ConstraintTemplate CRD（四條規則的 schema）
+│   │   ├── k8sforbiddefaultserviceaccount.yaml
+│   │   ├── k8srequiredspiffelabel.yaml
+│   │   ├── k8svalidserviceaccountname.yaml
+│   │   └── k8svalidspiffeprincipal.yaml
+│   └── constraints/                # OPA Constraint（實際生效的 policy 物件）
+│       ├── enforce-sa-naming.yaml
+│       ├── no-default-sa.yaml
+│       ├── require-spiffe-label.yaml
+│       └── valid-spiffe-principal.yaml
+│
+├── test/
+│   ├── good-sa-deployment.yaml     # payment-gateway（SA 命名合規，spiffe-managed=true）
+│   ├── bad-sa-deployment.yaml      # OPA 拒絕範例（SA 命名違規）
+│   ├── payment-core-deployment.yaml
+│   ├── peer-authentication.yaml    # STRICT mTLS（istio-validation namespace）
+│   └── payment-core-authz-policy.yaml  # AuthorizationPolicy（只允許 payment-gateway-sa）
+│
+├── scripts/
+│   ├── 00-create-kind-cluster.sh
+│   ├── 01-start-spire-server.sh    # 下載 binary，以 host process 啟動
+│   ├── 02-install-spire-agent.sh   # Helm 安裝 SPIRE Agent + SPIFFE CSI Driver
+│   ├── 03-start-controller-manager.sh  # Docker 啟動 Controller Manager + apply ClusterSPIFFEID
+│   ├── 04-install-gatekeeper.sh    # Helm 安裝 OPA Gatekeeper + ConstraintTemplate + Constraint
+│   ├── 05-install-istio.sh         # istioctl install（IstioOperator）
+│   ├── 06-deploy-test-workloads.sh # 部署測試 workload 到 istio-validation
+│   ├── 07-deploy-validation-gateway.sh  # Helm post-renderer 部署 user-namespace gateway
+│   └── 08-sanity-check.sh          # 14 section 全面健康檢查（make check）
+│
+└── docs/
+    ├── spire-istio-poc-summary.md  # 本文件
+    ├── spire-istio-sequence.drawio # draw.io 序列圖（六個 Phase 色塊）
+    └── spire-istio-sequence.png    # 匯出 PNG
+```
 
 ---
 
