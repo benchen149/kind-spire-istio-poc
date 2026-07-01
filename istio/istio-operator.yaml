@@ -37,6 +37,12 @@ spec:
           spec:
             initContainers:
             - name: istio-proxy
+              env:
+              # 告訴 pilot-agent 改連 SPIRE Agent socket 取 cert，而非 istiod
+              - name: CA_ADDR
+                value: unix:///run/secrets/workload-spiffe-uds/socket
+              - name: PILOT_CERT_PROVIDER
+                value: spiffe
               volumeMounts:
               - name: workload-socket
                 mountPath: /run/secrets/workload-spiffe-uds

@@ -141,9 +141,24 @@ if [[ -x "$ISTIOCTL" ]]; then
   POD=$(kubectl get pod -n payment -l app=payment-gateway \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   if [[ -n "$POD" ]]; then
-    check_output "payment-gateway Envoy 持有 SPIRE 簽發的 SVID" \
-        "poc.internal" \
-        "$ISTIOCTL" proxy-config secret -n payment "$POD"
+    # proxy-config secret 純文字表格不含 SAN，需用 -o json 解析 cert 內容
+    SVID_SAN=$("$ISTIOCTL" proxy-config secret -n payment "$POD" -o json 2>/dev/null \
+      | python3 -c "
+import json,sys,base64,subprocess
+d=json.load(sys.stdin)
+for s in d.get('dynamicActiveSecrets',[]):
+    try:
+        pem=base64.b64decode(s['secret']['tlsCertificate']['certificateChain']['inlineBytes']).decode()
+        r=subprocess.run(['openssl','x509','-text','-noout'],input=pem,capture_output=True,text=True)
+        for line in r.stdout.splitlines():
+            if 'URI:spiffe://' in line: print(line.strip())
+    except: pass
+" 2>/dev/null)
+    if echo "$SVID_SAN" | grep -q "poc.internal"; then
+      pass "payment-gateway Envoy 持有 SPIRE 簽發的 SVID ($SVID_SAN)"
+    else
+      fail "payment-gateway Envoy 未持有 SPIRE 簽發的 SVID（SAN: ${SVID_SAN:-empty}）"
+    fi
   else
     fail "payment-gateway pod 未找到（無法驗證 SVID）"
   fi
