@@ -793,6 +793,60 @@ Gateway Envoy 不會主動發 SDS 請求，需有 TLS-configured `Gateway` resou
 
 ---
 
+## Istio Revision 安裝與 Namespace Injection Label
+
+### Revision 模式的影響
+
+Istio 支援以 revision 方式安裝多個控制平面版本並行（如 `istioctl install --revision 1-29`）。Revision 模式下，MutatingWebhookConfiguration 改為監聽 `istio.io/rev` label，**`istio-injection: enabled` 完全被忽略**。
+
+| 安裝方式 | Namespace label | Sidecar 是否注入 |
+|---|---|---|
+| Default（本 PoC） | `istio-injection: enabled` | ✓ |
+| Revision（`1-29`） | `istio-injection: enabled` | ✗（靜默失敗） |
+| Revision（`1-29`） | `istio.io/rev: 1-29` | ✓ |
+
+若 namespace 只有 `istio-injection=enabled` 而 Istio 以 revision 安裝，sidecar 不會被注入，`spire` template 不套用，SPIRE 整合完全失效（不報錯）。
+
+### Production 建議做法
+
+**改用 revision label：**
+
+```yaml
+metadata:
+  labels:
+    istio.io/rev: "1-29"      # 替換 istio-injection: enabled
+    spiffe-managed: "true"    # 不變
+```
+
+**若 namespace 不加 injection label，改在 pod 層指定：**
+
+```yaml
+# Deployment pod template annotations
+inject.istio.io/inject: "true"
+inject.istio.io/templates: "sidecar,spire"
+```
+
+**加 `PeerAuthentication STRICT` 補網（讓失敗可見）：**
+
+沒有 Envoy sidecar 的 pod 無法建立 mTLS 連線，立即失敗而非靜默通過。
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: payment
+spec:
+  mtls:
+    mode: STRICT
+```
+
+**加 OPA Constraint 在 admission 層補網：**
+
+新增 `K8sRequireIstioSidecar` Constraint，確認 `spiffe-managed=true` 的 pod 含 `istio-proxy` container，admission 直接拒絕未注入的 pod，防止靜默失效進入叢集。
+
+---
+
 ## 優點
 
 | 優點 | 說明 |
