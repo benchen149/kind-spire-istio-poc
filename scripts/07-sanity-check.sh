@@ -295,6 +295,34 @@ check_output "ingress gateway SPIRE entry 存在" \
       "ingressgateway" \
       "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
 
+# ─── 14. User-namespace Gateway（Helm post-renderer）─────────────────────
+# 為何檢查：驗證 user namespace 自行透過 Helm 部署的 ingress gateway 能走 SPIRE cert。
+# istio-ingress Helm chart 將 workload-socket 硬寫為 emptyDir，需 post-renderer 替換。
+# 此 section 驗證三件事：
+#   1. CSI volume 已透過 post-renderer 正確套用（非 emptyDir）
+#   2. CA_ADDR 指向 SPIRE socket（post-renderer 覆寫 env）
+#   3. SPIRE entry 存在（istio-workloads ClusterSPIFFEID 自動建立，
+#      前提：namespace 與 pod 都有 spiffe-managed=true）
+section "14. User-namespace Gateway（Helm post-renderer）"
+check "istio-validation namespace 存在" \
+      kubectl get namespace istio-validation
+check "validation-ingressgateway pod Running" \
+      bash -c "kubectl -n istio-validation get pods -l app=validation-ingressgateway \
+        --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
+check "workload-socket = CSI volume（post-renderer 已套用）" \
+      bash -c "kubectl -n istio-validation get deploy validation-ingressgateway \
+        -o jsonpath='{.spec.template.spec.volumes[?(@.name==\"workload-socket\")].csi.driver}' \
+        2>/dev/null | grep -q 'csi.spiffe.io'"
+check_output "CA_ADDR 指向 SPIRE socket（非 istiod）" \
+      "workload-spiffe-uds" \
+      kubectl -n istio-validation get deploy validation-ingressgateway \
+        -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CA_ADDR")].value}'
+# SPIRE entry SPIFFE ID 包含 istio-validation namespace，
+# 確認 istio-workloads ClusterSPIFFEID（而非 istio-ingressgateway 那筆）有覆蓋到此 gateway
+check_output "validation-gateway-sa SPIRE entry 存在" \
+      "spiffe://poc.internal/ns/istio-validation/sa/validation-gateway-sa" \
+      "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
+
 # ─── 結果摘要 ─────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}══════════════════════════════${NC}"
