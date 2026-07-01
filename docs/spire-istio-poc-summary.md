@@ -200,13 +200,24 @@ payment-egress-sa    → 打外部 API（唯一需要出去的）
 
 #### SPIFFE ID 路徑
 
-維持 Istio 預設格式，不客製化：
+Istio 官方文件明確規定 workload 的 SPIFFE ID **必須**符合以下固定格式，**不可客製化**：
 
 ```
-spiffe://corp.internal/ns/payment/sa/payment-gateway-sa
-spiffe://corp.internal/ns/payment/sa/payment-core-sa
-spiffe://corp.internal/ns/payment/sa/payment-data-sa
-spiffe://corp.internal/ns/payment/sa/payment-egress-sa
+spiffe://<trust.domain>/ns/<namespace>/sa/<service-account>
+```
+
+> 來源：[Istio SPIRE Integration](https://istio.io/latest/docs/ops/integrations/spire/)
+> "Istio currently requires a specific SPIFFE ID format for workloads. All registrations must follow the Istio SPIFFE ID pattern: `spiffe://<trust.domain>/ns/<namespace>/sa/<service-account>`"
+
+偏離此格式會導致 Istio policy engine 無法正確解析 namespace / SA，造成 mTLS 驗證或 RBAC 判斷失效。
+
+本 PoC 範例（trust domain `poc.internal`）：
+
+```
+spiffe://poc.internal/ns/istio-validation/sa/payment-gateway-sa
+spiffe://poc.internal/ns/istio-validation/sa/payment-core-sa
+spiffe://poc.internal/ns/istio-validation/sa/payment-data-sa
+spiffe://poc.internal/ns/istio-validation/sa/payment-egress-sa
 ```
 
 #### SPIRE entry 管理方式
@@ -233,7 +244,7 @@ spec:
         values: ["true"]
 ```
 
-路徑 template 維持 Istio 預設格式，不客製化。
+路徑 template 固定使用 Istio 要求的格式（不可客製化，見上方「SPIFFE ID 路徑」說明）。
 Controller Manager 自動偵測 pod 建立 / 刪除，同步向外部 SPIRE Server 建立或清理 entry。
 
 > `.PodSpec.ServiceAccountName`：實測確認 SPIRE Controller Manager 的
