@@ -510,22 +510,32 @@ annotation 的 workload 才會套用）：
 ```yaml
 apiVersion: install.istio.io/v1alpha1
 kind: IstioOperator
-metadata:
-  namespace: istio-system
 spec:
-  profile: demo
+  profile: default
   meshConfig:
     trustDomain: poc.internal
+    accessLogFile: /dev/stdout
+  components:
+    pilot:
+      k8s:
+        env:
+          - name: ENABLE_NATIVE_SIDECARS
+            value: "true"
   values:
     sidecarInjectorWebhook:
       templates:
         spire: |
           spec:
-            # Istio 1.29 + k8s 1.29 以上預設啟用 native sidecar
-            # （istio-proxy 是 initContainer），所以要 patch initContainers
-            # 而非 containers，否則會跟 sidecar template 產生衝突。
+            # native sidecar 模式（Istio 1.29）：istio-proxy 是 initContainer
+            # 必須 patch initContainers 而非 containers
             initContainers:
             - name: istio-proxy
+              env:
+              # 告訴 pilot-agent 改連 SPIRE Agent socket 取 cert
+              - name: CA_ADDR
+                value: unix:///run/secrets/workload-spiffe-uds/socket
+              - name: PILOT_CERT_PROVIDER
+                value: spiffe
               volumeMounts:
               - name: workload-socket
                 mountPath: /run/secrets/workload-spiffe-uds
@@ -545,6 +555,58 @@ metadata:
     spiffe-managed: "true"        # 給 SPIRE ClusterSPIFFEID 用，建立 entry
   annotations:
     inject.istio.io/templates: "sidecar,spire"   # 套用上面自訂的 spire template
+```
+
+### CA_ADDR 與 socket 路徑設定鏈
+
+`CA_ADDR=unix:///run/secrets/workload-spiffe-uds/socket` 這個值不是任意的，每一段都對應到不同層的設定：
+
+```
+[SPIRE Agent Helm chart]
+  spire-agent DaemonSet
+  hostPath → /run/spire/agent-sockets/      ← 節點上的真實 socket 目錄
+                                               由 SPIRE Helm chart 預設定義
+
+       ↓  SPIFFE CSI Driver 讀此目錄
+
+[SPIFFE CSI Driver DaemonSet]
+  /spire-agent-socket 掛載節點的 /run/spire/agent-sockets/
+  以 driver: "csi.spiffe.io" 暴露給 pod
+  在掛載點內自動建立 symlink：
+      socket       -> spire-agent.sock      ← CA_ADDR 用此 symlink
+      api.sock     -> spire-agent.sock      ← 舊版相容
+      spire-agent.sock                      ← 真實 socket 檔案
+
+       ↓  pod 裡的 CSI volume
+
+[istio-operator.yaml — spire sidecar template]
+  volumes:
+    - csi:
+        driver: "csi.spiffe.io"             ← 向 CSI Driver 申請 volume
+  volumeMounts:
+    - mountPath: /run/secrets/workload-spiffe-uds  ← pod 內掛載點（可自訂）
+
+       ↓  pilot-agent 啟動時讀取
+
+[CA_ADDR = unix:///run/secrets/workload-spiffe-uds/socket]
+                                 ↑                    ↑
+                        sidecar template 的       SPIFFE CSI Driver
+                        mountPath（可自訂）        建立的固定 symlink 名稱
+```
+
+**三個設定的對應關係：**
+
+| 設定值 | 定義位置 | 說明 |
+|---|---|---|
+| `/run/spire/agent-sockets/` | SPIRE Agent Helm chart hostPath | 節點上 socket 的來源目錄 |
+| `csi.spiffe.io` | sidecar template `volumes.csi.driver` | 向 SPIFFE CSI Driver 申請 volume 的 driver 名稱 |
+| `/run/secrets/workload-spiffe-uds` | sidecar template `volumeMounts.mountPath` | pod 內掛載點，**可自訂** |
+| `socket` | SPIFFE CSI Driver 自動建立的 symlink | **固定名稱**，不需手動設定 |
+
+**重要：** 若修改 sidecar template 的 `mountPath`，`CA_ADDR` 必須同步修改：
+
+```
+mountPath: /custom/path  →  CA_ADDR: unix:///custom/path/socket
 ```
 
 **驗證憑證確實由 SPIRE 簽發**（`istioctl proxy-config secret` +
