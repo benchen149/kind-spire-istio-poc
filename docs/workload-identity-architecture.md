@@ -215,7 +215,7 @@ CA（Certificate Authority）= 憑證授權機構，負責簽發 X.509 workload 
 | **Workload cert 簽發者** | istiod（載入 cacerts Secret） | SPIRE Server |
 | **xDS TLS 簽發者** | istiod（同一個 CA） | istiod self-signed（獨立，不受影響） |
 | **cacerts Secret** | 👎 需要手動建立與管理 | 👍 不需要 |
-| **SVID 輪替**（cert 到期前自動換新，連線不中斷） | ➖ istiod 負責，需搭配輪替流程 | 👍 SPIRE Agent 自動推送，熱換不中斷 |
+| **SVID 輪替**（cert 到期前自動換新，連線不中斷） | ➖ 自動，預設 TTL 24 小時 | 👍 自動，預設 TTL 1 小時（暴露窗口更小） |
 | **信任範圍** | 👎 限於單一 Istio mesh | 👍 跨 k8s、VM、裸機皆可 |
 | **跨叢集身份驗證** | 👎 需手動共享 root CA | 👍 SPIRE Federation（不共享私鑰） |
 | **非 k8s workload** | 👎 不支援 | 👍 支援（SPIRE 原生能力） |
