@@ -241,13 +241,12 @@ sequenceDiagram
 - 存取相同的資源
 - 信任等級相同
 
-#### 範例（payment namespace）
+#### 範例（istio-validation namespace，實測現況）
 
 ```
-payment-gateway-sa   → 對外接收請求（ingressgateway → 這裡）
-payment-core-sa      → 核心業務邏輯（只被 gateway 層打）
-payment-data-sa      → 存取 DB / 敏感資料（只被 core 層打）
-payment-egress-sa    → 打外部 API（唯一需要出去的）
+validation-gateway-sa  → user-namespace ingress gateway（Helm post-renderer 部署）
+payment-gateway-sa     → 對外接收請求（ingressgateway → 這裡）
+payment-core-sa        → 核心業務邏輯（只被 gateway 層打）
 ```
 
 #### SPIFFE ID 路徑
@@ -263,13 +262,12 @@ spiffe://<trust.domain>/ns/<namespace>/sa/<service-account>
 
 偏離此格式會導致 Istio policy engine 無法正確解析 namespace / SA，造成 mTLS 驗證或 RBAC 判斷失效。
 
-本 PoC 範例（trust domain `poc.internal`）：
+本 PoC 實測（trust domain `poc.internal`，`istio-validation` namespace）：
 
 ```
+spiffe://poc.internal/ns/istio-validation/sa/validation-gateway-sa
 spiffe://poc.internal/ns/istio-validation/sa/payment-gateway-sa
 spiffe://poc.internal/ns/istio-validation/sa/payment-core-sa
-spiffe://poc.internal/ns/istio-validation/sa/payment-data-sa
-spiffe://poc.internal/ns/istio-validation/sa/payment-egress-sa
 ```
 
 #### SPIRE entry 管理方式
