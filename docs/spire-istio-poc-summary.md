@@ -105,7 +105,7 @@ sequenceDiagram
     participant SA  as SPIRE Agent+CSI
     participant EN  as Envoy
 
-    rect rgb(220, 235, 255)
+    rect rgb(238, 244, 255)
         Note over Dev,EN: Phase A - OPA Admission
         Dev->>OPA: kubectl apply Deployment
         OPA->>OPA: L1 SA naming rule
@@ -114,14 +114,14 @@ sequenceDiagram
         OPA-->>Dev: admit
     end
 
-    rect rgb(220, 255, 220)
+    rect rgb(238, 255, 238)
         Note over Dev,EN: Phase B - Entry creation
         Dev->>CM: pod created
         CM->>SS: entry create SPIFFE ID
         SS-->>CM: entry stored
     end
 
-    rect rgb(255, 240, 210)
+    rect rgb(255, 248, 238)
         Note over Dev,EN: Phase C - Node Attestation
         SA->>SS: k8s_psat token
         SS->>SA: TokenReview via kubeconfig
@@ -129,14 +129,13 @@ sequenceDiagram
         Note over SA: agent.sock ready
     end
 
-    rect rgb(240, 220, 255)
+    rect rgb(248, 238, 255)
         Note over Dev,EN: Phase D - CSI socket ready
         Note over SA: CSI Driver mounts agent.sock into pod volume
-        Note over EN: initContainer waits for socket to appear
-        Note over EN: workload-spiffe-uds/socket ready
+        Note over EN: initContainer waits; socket ready
     end
 
-    rect rgb(255, 255, 210)
+    rect rgb(255, 255, 238)
         Note over Dev,EN: Phase E - Envoy SDS direct to SPIRE Agent
         EN->>SA: SDS request via CSI socket
         SA->>SS: CSR relay
@@ -145,7 +144,7 @@ sequenceDiagram
         Note over EN: Envoy ready
     end
 
-    rect rgb(210, 255, 240)
+    rect rgb(238, 255, 248)
         Note over Dev,EN: Phase F - App start + mTLS
         Dev->>EN: app container start
         EN-->>Dev: mTLS spiffe://poc.internal/ns/NS/sa/SA
