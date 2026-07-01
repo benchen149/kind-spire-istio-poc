@@ -10,19 +10,21 @@ SPIRE_CRDS_CHART_VERSION  ?= 0.5.0
 SPIRE_AGENT_CHART_VERSION ?= 0.21.0
 SPIRE_CM_VERSION          ?= 0.6.6
 GATEKEEPER_VERSION        ?= 3.18.2
+ISTIO_VERSION             ?= 1.29.4
 
 # 安裝路徑（預設使用者家目錄，無需 sudo；可覆蓋：make SPIRE_HOME=/opt/spire）
-SPIRE_HOME ?= $(HOME)/.local/share/spire
-CM_HOME    ?= $(HOME)/.local/share/spire-controller-manager
+SPIRE_HOME  ?= $(HOME)/.local/share/spire
+CM_HOME     ?= $(HOME)/.local/share/spire-controller-manager
+ISTIO_HOME  ?= $(HOME)/.local/share/istio
 
-export SPIRE_VERSION SPIRE_CRDS_CHART_VERSION SPIRE_AGENT_CHART_VERSION SPIRE_CM_VERSION GATEKEEPER_VERSION
-export SPIRE_HOME CM_HOME
+export SPIRE_VERSION SPIRE_CRDS_CHART_VERSION SPIRE_AGENT_CHART_VERSION SPIRE_CM_VERSION GATEKEEPER_VERSION ISTIO_VERSION
+export SPIRE_HOME CM_HOME ISTIO_HOME
 
-.PHONY: all cluster spire gatekeeper deploy check clean status help
+.PHONY: all cluster spire gatekeeper istio deploy check clean status help
 
 .DEFAULT_GOAL := all
 
-all: cluster spire gatekeeper deploy  ## 完整 PoC 環境建立（00 → 05）
+all: cluster spire gatekeeper istio deploy  ## 完整 PoC 環境建立（00 → 06）
 
 cluster:  ## 建立 Kind cluster
 	$(SCRIPTS)/00-create-kind-cluster.sh
@@ -35,11 +37,14 @@ spire:  ## 啟動 SPIRE Server、Agent、Controller Manager
 gatekeeper:  ## 安裝 OPA Gatekeeper 與 Constraints
 	$(SCRIPTS)/04-install-gatekeeper.sh
 
+istio:  ## 安裝 Istio（SPIFFE CSI Driver + SDS 整合）
+	$(SCRIPTS)/05-install-istio.sh
+
 deploy:  ## 部署測試 workload 並驗證
-	$(SCRIPTS)/05-deploy-test-workloads.sh
+	$(SCRIPTS)/06-deploy-test-workloads.sh
 
 check:  ## 執行 sanity check，驗證整體 PoC 架構是否正確
-	$(SCRIPTS)/06-sanity-check.sh
+	$(SCRIPTS)/07-sanity-check.sh
 
 clean:  ## 刪除 Kind cluster 並清理背景 process
 	-kind delete cluster --name spire-istio-poc

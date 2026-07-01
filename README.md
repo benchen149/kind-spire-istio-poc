@@ -12,7 +12,7 @@ PoC: External SPIRE as Istio mTLS CA on Kind, with OPA Gatekeeper enforcement
 make        # 等同 make all，完整建立 PoC 環境
 ```
 
-執行順序：Kind cluster → SPIRE Server/Agent/Controller Manager → OPA Gatekeeper → 測試 workload
+執行順序：Kind cluster → SPIRE Server/Agent/Controller Manager → OPA Gatekeeper → Istio → 測試 workload
 
 ---
 
@@ -24,6 +24,7 @@ make        # 等同 make all，完整建立 PoC 環境
 | `make cluster` | 建立 Kind cluster |
 | `make spire` | 啟動 SPIRE Server、Agent、Controller Manager |
 | `make gatekeeper` | 安裝 OPA Gatekeeper 與 Constraints |
+| `make istio` | 安裝 Istio（SPIFFE CSI Driver + SDS 整合） |
 | `make deploy` | 部署測試 workload 並驗證 |
 | `make check` | Sanity check：驗證整體 PoC 架構是否正確建立 |
 | `make status` | 查看各元件運行狀態 |
@@ -42,6 +43,7 @@ SPIRE_CRDS_CHART_VERSION  = 0.5.0
 SPIRE_AGENT_CHART_VERSION = 0.21.0
 SPIRE_CM_VERSION          = 0.6.6
 GATEKEEPER_VERSION        = 3.18.2
+ISTIO_VERSION             = 1.29.4
 ```
 
 **修改預設版本**：編輯 `versions.env` 後重新執行 `make`。
@@ -70,7 +72,7 @@ SPIRE_VERSION=1.10.0 ./scripts/01-start-spire-server.sh
 ├── Makefile                    # 單一進入點
 ├── versions.env                # 元件版本設定
 ├── kind/                       # Kind cluster 設定
-├── scripts/                    # 各步驟部署腳本（00~05）
+├── scripts/                    # 各步驟部署腳本（00~06）
 ├── spire-server/               # SPIRE Server 設定
 ├── spire/                      # SPIRE Agent Helm values、ClusterSPIFFEID
 ├── istio/                      # Istio Operator 設定

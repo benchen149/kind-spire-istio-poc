@@ -126,22 +126,29 @@ check_output "payment-core-sa 的 SPIRE entry 存在" \
       "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
 
 # ─── 11. Envoy SVID（SPIRE 簽發）─────────────────────────────────────────
+ISTIO_HOME="${ISTIO_HOME:-$HOME/.local/share/istio}"
+ISTIO_VERSION="${ISTIO_VERSION:-1.29.4}"
+ISTIOCTL="$ISTIO_HOME/istio-${ISTIO_VERSION}/bin/istioctl"
+# 也接受 PATH 上的 istioctl
+command -v istioctl >/dev/null 2>&1 && ISTIOCTL="$(command -v istioctl)"
+
 section "11. Envoy SVID（SPIRE 簽發驗證）"
-if ! kubectl -n istio-system get pods -l app=istiod --field-selector=status.phase=Running \
-     2>/dev/null | grep -q Running; then
-  echo -e "  ${YELLOW}－${NC} istiod 未安裝，略過 SVID 驗證（Istio 為選配元件）"
-elif ! command -v istioctl >/dev/null 2>&1; then
-  echo -e "  ${YELLOW}－${NC} istioctl 未安裝，略過 SVID 驗證"
-else
+check "istiod pod 執行中" \
+      bash -c "kubectl -n istio-system get pods -l app=istiod \
+        --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
+
+if [[ -x "$ISTIOCTL" ]]; then
   POD=$(kubectl get pod -n payment -l app=payment-gateway \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   if [[ -n "$POD" ]]; then
     check_output "payment-gateway Envoy 持有 SPIRE 簽發的 SVID" \
         "poc.internal" \
-        istioctl proxy-config secret -n payment "$POD"
+        "$ISTIOCTL" proxy-config secret -n payment "$POD"
   else
-    echo -e "  ${YELLOW}－${NC} payment-gateway pod 未找到，略過 SVID 驗證"
+    fail "payment-gateway pod 未找到（無法驗證 SVID）"
   fi
+else
+  fail "istioctl 未找到（路徑: $ISTIOCTL）"
 fi
 
 # ─── 結果摘要 ─────────────────────────────────────────────────────────────

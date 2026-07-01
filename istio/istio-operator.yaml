@@ -1,36 +1,40 @@
-# Istio + SPIRE 整合設定
-#
-# 重要更正：文件（docs/spire-istio-poc-summary.md）原先描述 PILOT_CERT_PROVIDER=spiffe
-# 讓 istiod 取得自身 SVID 變成 mesh RA，但這個值在 Istio 原始碼
-# （pkg/config/constants/constants.go）中並不存在，合法值只有
-# istiod / kubernetes / k8s.io/* / custom / none。
-#
-# 改採 Istio 官方實際支援、有實測範例的整合方式（istio/istio repo
-# samples/security/spire/）：每個 workload 的 Envoy sidecar 透過
-# SPIFFE CSI Driver（csi.spiffe.io）掛載 SPIRE Agent socket，
-# 直接以 SDS 協定向 SPIRE 要憑證，完全繞過 istiod 的憑證機制。
-# istiod 本身憑證維持 Istio 預設（self-signed），不受影響。
 apiVersion: install.istio.io/v1alpha1
 kind: IstioOperator
-metadata:
-  namespace: istio-system
 spec:
-  profile: demo
+  profile: default
   meshConfig:
     trustDomain: poc.internal
+    accessLogFile: /dev/stdout
+  components:
+    ingressGateways:
+      - enabled: true
+        name: istio-ingressgateway
+        k8s:
+          hpaSpec:
+            minReplicas: 1
+            maxReplicas: 1
+    pilot:
+      k8s:
+        env:
+          - name: PILOT_FILTER_GATEWAY_CLUSTER_CONFIG
+            value: "true"
+          - name: PILOT_HTTP10
+            value: "true"
+          # Istio 1.29+：native sidecar（initContainer, restartPolicy: Always）
+          - name: ENABLE_NATIVE_SIDECARS
+            value: "true"
   values:
-    # 自訂 sidecar template：只有明確加上
-    # annotation inject.istio.io/templates: "sidecar,spire" 的 workload
-    # 才會額外掛載 SPIRE agent 的 SDS socket（見 test/ 內的範例 Deployment）。
-    # Ingress/Egress Gateway 不在本 PoC 驗證範圍內，維持 Istio 預設憑證。
+    global:
+      variant: debug
+      meshID: mesh1
+    # 自訂 spire sidecar template：只有帶 annotation
+    # inject.istio.io/templates: "sidecar,spire" 的 workload
+    # 才會掛載 SPIFFE CSI Driver 的 socket volume。
+    # native sidecar 模式下需 patch initContainers（非 containers）。
     sidecarInjectorWebhook:
       templates:
         spire: |
           spec:
-            # Kind 1.34 + Istio 1.29 預設啟用 native sidecar，
-            # istio-proxy 是以 initContainer（restartPolicy: Always）形式注入，
-            # 因此這裡要 patch initContainers 而非 containers，否則會與
-            # sidecar template 產生的 istio-proxy 衝突（重複定義）。
             initContainers:
             - name: istio-proxy
               volumeMounts:
