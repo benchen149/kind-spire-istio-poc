@@ -347,3 +347,161 @@ rm -rf ~/.local/share/spire/data/
 ```
 
 > **Production**：sqlite3 不支援多副本，需改用 PostgreSQL 並啟用定期備份。`keys.json` 建議額外存放於 KMS 或 HSM，不應僅依賴檔案系統備份。
+
+---
+
+## 維護成本比較：Istio 單獨 vs Istio + SPIRE
+
+以 **Production 架構**為基準的維護成本、考量點與風險點比較。
+
+### Production 架構前提
+
+| | 架構一：Istio 自管 CA | 架構二：Istio + SPIRE |
+|---|---|---|
+| istiod | 2～3 replica | 2～3 replica |
+| SPIRE Server | 不需要 | 3 replica（HA）|
+| SPIRE Datastore | 不需要 | PostgreSQL HA（非 SQLite3）|
+| SPIRE Agent | 不需要 | DaemonSet（每個 node）|
+| SPIRE Controller Manager | 不需要 | 1～2 replica |
+| SPIFFE CSI Driver | 不需要 | DaemonSet（每個 node）|
+| cacerts Secret | 需要（人工管理）| 不需要 |
+
+---
+
+### 元件數量與升級複雜度
+
+架構一需要維護的元件只有 istiod，升級跟隨 Istio release cycle。
+
+架構二需要額外維護：
+
+```
+SPIRE Server + Agent + Controller Manager（三者版本需一致，不可各自獨立升級）
+SPIFFE CSI Driver（獨立 release cycle，需與 kernel CSI 介面相容）
+PostgreSQL（DB 版本升級、schema migration 相容性）
+```
+
+- SPIRE 與 Istio 無官方版本相容矩陣，升級前需自行在 staging 驗證
+- PostgreSQL 升級需確認 SPIRE schema migration 相容性
+- SPIFFE CSI Driver 與 Linux kernel CSI 介面相依，節點 kernel 升級可能影響
+
+---
+
+### CA 憑證管理成本
+
+| 操作 | 架構一 | 架構二 |
+|---|---|---|
+| Intermediate / Signing CA 輪替 | 🔴 人工，每 1～3 年 | 🟢 全自動（ca_ttl，建議 24h）|
+| Workload cert 輪替 | 🟢 自動（24h TTL）| 🟢 自動（1h TTL）|
+| CA 私鑰保護 | 🔴 k8s Secret 明文 base64 | 🟡 keys.json（建議搭配 KMS/HSM）|
+| DB 備份 | 🟢 不需要 | 🔴 PostgreSQL 定期備份 + trust bundle 離線備份 |
+
+架構一的 Intermediate CA 通常設 100 年，`ca-key.pem` 以 base64 長期存於 k8s Secret，有 cluster admin 權限即可讀取，私鑰長期暴露無法透過輪替撤銷。架構二的 Signing CA 每 24h 自動輪替，私鑰暴露窗口大幅縮小。
+
+---
+
+### 可用性與 HA 需求
+
+**架構一**：istiod 掛掉後，現有 workload SVID 撐 24h（SVID TTL）。
+
+**架構二** SPIRE Server 失效影響鏈：
+
+```
+SPIRE Server 全掛 → Agent 無法更新 SVID
+  → SVID TTL 到期（1h）→ Envoy cert 失效 → 所有 mTLS 連線中斷
+```
+
+| | 架構一 | 架構二 |
+|---|---|---|
+| 額外 DB HA 需求 | 🟢 不需要 | 🔴 PostgreSQL HA（primary + standby）|
+| DaemonSet 監控 | 🟢 不需要 | 🔴 Agent + CSI Driver（每 node 狀態）|
+| CA 服務掛掉容錯時間 | 🟢 24h | 🔴 1h（HA 未到位前）|
+
+架構二的可用性門檻比架構一更高：PostgreSQL HA 成為整個 mTLS 架構的關鍵依賴，HA 未到位前容錯僅 1h。
+
+---
+
+### Observability 與 Debug 複雜度
+
+**架構一** cert 問題排查路徑：
+
+```
+mTLS 失敗 → istioctl proxy-config secret → 確認 istiod 狀態（2～3 層）
+```
+
+**架構二** cert 問題排查路徑：
+
+```
+mTLS 失敗
+  → SVID 是否存在（istioctl proxy-config secret）
+    → CSI volume 是否掛載（kubectl describe pod）
+      → SPIFFE CSI Driver 是否正常（DaemonSet pod 狀態）
+        → SPIRE Agent 是否連接 Server（Agent log）
+          → SPIRE entry 是否存在（spire-server entry show）
+            → ClusterSPIFFEID selector 是否匹配
+              → SPIRE Server 與 PostgreSQL 連線（6～8 層）
+```
+
+| | 架構一 | 架構二 |
+|---|---|---|
+| 排查層數 | 2～3 層 | 6～8 層 |
+| On-call 需要的知識 | Istio | Istio + SPIFFE/SPIRE + PostgreSQL |
+| 跨團隊協作 | 🟢 低（Istio 團隊自理）| 🔴 高（Istio + SPIRE + DBA 三方）|
+
+---
+
+### 跨團隊依賴與組織風險
+
+架構二的 Istio 可用性依賴於：
+
+```
+SPIRE 維護團隊（Server SLA、ClusterSPIFFEID 維護、trust domain 管理）
+DBA / Platform 團隊（PostgreSQL 可用性與備份）
+Security 團隊（KMS / HSM，keys.json 保護）
+```
+
+**組織風險**：
+- SPIRE 團隊與 Istio 團隊 SLA 未對齊時，發生 incident 責任歸屬模糊
+- SPIRE 升級計畫若未提前通知 Istio 團隊，可能造成相容性問題
+- **trust domain 一旦設定不可更改**，若初始設定錯誤，重建成本極高
+
+---
+
+### 維護成本總覽
+
+| 面向 | 架構一 | 架構二 | 差異 |
+|---|---|---|---|
+| 日常維運元件數 | 1 | 5～6 | 🔴 顯著增加 |
+| 升級複雜度 | 低 | 高（版本矩陣自行維護）| 🔴 顯著增加 |
+| CA 輪替人工成本 | 中 | 低（全自動）| 🟢 架構二較佳 |
+| HA 建置成本 | 低 | 高（需 PostgreSQL HA）| 🔴 顯著增加 |
+| CA 服務容錯時間 | 24h | 1h（HA 未到位前）| 🔴 架構二劣勢 |
+| Debug 複雜度 | 低（2～3 層）| 高（6～8 層）| 🔴 顯著增加 |
+| On-call 知識需求 | Istio | Istio + SPIRE + DB | 🔴 增加 |
+| 跨團隊依賴 | 無 | SPIRE + DBA + Security | 🔴 增加 |
+| App 部署規範 | 簡單 | 需額外兩個標記 | 🟡 輕度增加 |
+| Signing CA 暴露窗口 | 100 年 | 24h | 🟢 架構二顯著優勢 |
+| 跨系統身份驗證 | 不支援 | 支援（SPIRE Federation）| 🟢 架構二優勢 |
+
+---
+
+### 決策建議
+
+**選擇架構一的條件：**
+- 純 k8s 環境，無跨系統身份驗證需求
+- 沒有獨立 Platform / Security 團隊，人力有限
+- 希望 on-call 責任範圍單純，避免跨團隊依賴
+
+**選擇架構二的條件：**
+- 有 VM、裸機、多叢集等混合環境，需要統一身份
+- 有獨立的 Platform 團隊可負責 SPIRE + PostgreSQL 維運
+- 安全要求高，Signing CA 私鑰暴露窗口需控制在 24h 以內
+
+**若選擇架構二，最低建議：**
+
+```
+① SPIRE Server HA（3 replica + PostgreSQL HA）就緒後才全面切換
+② SVID TTL 在 HA 未到位前設 24h，到位後收回 1h
+③ 建立跨團隊 Runbook：SPIRE outage 時誰負責、SLA 多少、Istio 側如何緊急應對
+④ PostgreSQL 定期備份 + trust bundle 離線備份納入 DR 演練
+⑤ SPIRE / Istio 升級前在 staging 完整驗證版本相容性
+```
