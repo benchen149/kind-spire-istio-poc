@@ -705,6 +705,94 @@ spec:
 
 ---
 
+## User Namespace 自建 IngressGateway 注意事項
+
+以下為透過 Helm chart（`istio-ingress`）在 user namespace 部署 IngressGateway 並整合 SPIRE 的實測經驗。PoC 驗證環境：`istio-validation` namespace，部署腳本見 `scripts/07-deploy-validation-gateway.sh`。
+
+### 1. Helm chart `workload-socket` 硬寫 `emptyDir`，必須 post-renderer
+
+chart 沒有 values 可以改 volume type。若直接用 kustomize strategic merge patch，會把 `emptyDir` 和 `csi` 合併成同一個 volume spec（k8s 禁止一個 volume 同時含兩種類型），必須用 Python 精確替換：
+
+```python
+for i, v in enumerate(spec.get('volumes', [])):
+    if v.get('name') == 'workload-socket':
+        spec['volumes'][i] = {'name': 'workload-socket',
+                              'csi': {'driver': 'csi.spiffe.io', 'readOnly': True}}
+```
+
+### 2. `pilotCertProvider=spiffe` 會移除 `istiod-ca-cert` mount，xDS 會 crash
+
+**workload cert（SVID）** 和 **xDS 控制平面 TLS** 是兩條獨立路徑：
+
+| 路徑 | 說明 | 負責方 |
+|---|---|---|
+| xDS TLS | pilot-agent ↔ istiod gRPC（port 15012） | `istiod-ca-cert` mount |
+| workload mTLS cert | Envoy ↔ SPIRE Agent SDS | `CA_ADDR` + `PILOT_CERT_PROVIDER` env |
+
+chart 在 `pilotCertProvider != istiod` 時會條件性移除 `istiod-ca-cert` volume 和 volumeMount，導致 pilot-agent 啟動時找不到 `var/run/secrets/istio/root-cert.pem` 而 crash。
+
+**正確做法**：values 保留 `pilotCertProvider: istiod`（chart 保留 xDS CA cert mount），post-renderer 只覆寫 `CA_ADDR` 和 `PILOT_CERT_PROVIDER` env var：
+
+```yaml
+# values.yaml
+global:
+  pilotCertProvider: "istiod"  # 保留，讓 chart 保留 istiod-ca-cert mount
+```
+
+```python
+# post-renderer: 覆寫 env
+for env in container.get('env', []):
+    if env['name'] == 'CA_ADDR':
+        env['value'] = 'unix:///run/secrets/workload-spiffe-uds/socket'
+    elif env['name'] == 'PILOT_CERT_PROVIDER':
+        env['value'] = 'spiffe'
+```
+
+### 3. SA 命名必須符合 OPA 規則
+
+chart 自動產生的 SA 名稱是 `{{ gateway.name }}-service-account`，不符合 OPA `enforce-sa-naming` Constraint 的 pattern `^[a-z0-9-]+-(?:gateway|core|data|egress|worker|internal)-sa$`。
+
+post-renderer 需同時 patch 三處以保持一致性：
+
+```python
+# ServiceAccount metadata.name
+# Deployment spec.serviceAccountName
+# RoleBinding subjects[].name
+```
+
+### 4. Namespace 和 Pod 都要加 `spiffe-managed: "true"`
+
+`istio-workloads` ClusterSPIFFEID 的雙層 selector：
+
+```
+namespaceSelector: spiffe-managed=true  ← namespace 必須有此 label
+podSelector:       spiffe-managed=true  ← pod 必須有此 label
+```
+
+兩者缺一，Controller Manager 不建 SPIRE entry，gateway 靜默拿不到 SVID。**User namespace 正確加 label 後不需要額外建 ClusterSPIFFEID**（`istio-system` 是例外，因為不能亂加 label，才需要獨立的 `istio-ingressgateway` ClusterSPIFFEID）。
+
+### 5. SVID 是 lazy 初始化
+
+Gateway Envoy 不會主動發 SDS 請求，需有 TLS-configured `Gateway` resource 且有流量通過才觸發。部署後 `istioctl proxy-config secret` 看不到 active secret 是正常的，驗證時只需確認：
+
+- SPIRE entry 存在（`spire-server entry show | grep <namespace>`）
+- `workload-socket` volume type 為 `csi.spiffe.io`（非 `emptyDir`）
+- `CA_ADDR` env 指向 SPIRE socket
+
+### 快速 Checklist
+
+```
+□ values.yaml: pilotCertProvider=istiod（保留 xDS CA cert mount）
+□ post-renderer patch 1: workload-socket emptyDir → csi.spiffe.io
+□ post-renderer patch 2: CA_ADDR / PILOT_CERT_PROVIDER env override → SPIRE
+□ post-renderer patch 3: SA rename 符合 OPA 命名規則（三處同步）
+□ namespace label: spiffe-managed=true + istio-injection=enabled
+□ pod label: spiffe-managed=true（在 values.yaml gateways.*.labels 加）
+□ 確認 SPIRE entry 建立：spire-server entry show | grep <namespace>
+```
+
+---
+
 ## 優點
 
 | 優點 | 說明 |
