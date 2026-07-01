@@ -18,7 +18,7 @@ CM_HOME    ?= $(HOME)/.local/share/spire-controller-manager
 export SPIRE_VERSION SPIRE_CRDS_CHART_VERSION SPIRE_AGENT_CHART_VERSION SPIRE_CM_VERSION GATEKEEPER_VERSION
 export SPIRE_HOME CM_HOME
 
-.PHONY: all cluster spire gatekeeper deploy clean status help
+.PHONY: all cluster spire gatekeeper deploy check clean status help
 
 .DEFAULT_GOAL := all
 
@@ -37,6 +37,9 @@ gatekeeper:  ## 安裝 OPA Gatekeeper 與 Constraints
 
 deploy:  ## 部署測試 workload 並驗證
 	$(SCRIPTS)/05-deploy-test-workloads.sh
+
+check:  ## 執行 sanity check，驗證整體 PoC 架構是否正確
+	$(SCRIPTS)/06-sanity-check.sh
 
 clean:  ## 刪除 Kind cluster 並清理背景 process
 	-kind delete cluster --name spire-istio-poc

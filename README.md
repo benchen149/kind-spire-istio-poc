@@ -25,6 +25,7 @@ make        # 等同 make all，完整建立 PoC 環境
 | `make spire` | 啟動 SPIRE Server、Agent、Controller Manager |
 | `make gatekeeper` | 安裝 OPA Gatekeeper 與 Constraints |
 | `make deploy` | 部署測試 workload 並驗證 |
+| `make check` | Sanity check：驗證整體 PoC 架構是否正確建立 |
 | `make status` | 查看各元件運行狀態 |
 | `make clean` | 刪除 Kind cluster 並清理背景 process |
 | `make help` | 顯示說明 |
