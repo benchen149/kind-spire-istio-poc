@@ -15,3 +15,20 @@ spec:
       - key: spiffe-managed
         operator: In
         values: ["true"]
+---
+# ingress gateway 不走 sidecar injection，需要獨立的 ClusterSPIFFEID。
+# 用 app: istio-ingressgateway label 精確匹配，避免擴大 istio-system 的 SPIFFE 範圍。
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: istio-ingressgateway
+spec:
+  spiffeIDTemplate: "spiffe://poc.internal/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: istio-ingressgateway
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: ["istio-system"]

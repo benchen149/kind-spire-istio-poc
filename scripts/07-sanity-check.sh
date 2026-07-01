@@ -228,6 +228,34 @@ else
   fail "istioctl 未找到（路徑: $ISTIOCTL）"
 fi
 
+# ─── 12. Ingress Gateway SPIRE 整合 ──────────────────────────────────────
+# 為何檢查：ingress gateway 不走 sidecar injection（sidecar.istio.io/inject: false），
+# 必須透過 IstioOperator k8s.overlays 手動替換 workload-socket 為 CSI volume。
+# 只驗證 SPIRE entry 存在（不驗 active SVID）：ingress gateway 採 lazy cert 初始化，
+# 需有 TLS-configured Gateway resource 且流量通過後才會發 SDS 請求；
+# entry 存在代表 Controller Manager → SPIRE Server 這條鏈路已正確建立，
+# cert 將在第一筆 TLS 流量時由 SPIRE 即時簽發。
+section "12. Ingress Gateway SPIRE 整合"
+# 驗證 CSI volume 已取代 emptyDir（socket 存在且是 Unix domain socket 類型）
+IGW_POD=$(kubectl get pod -n istio-system -l app=istio-ingressgateway \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+if [[ -n "$IGW_POD" ]]; then
+  check "ingress gateway workload-socket 已掛載 CSI volume（非 emptyDir）" \
+        bash -c "kubectl -n istio-system get deploy istio-ingressgateway \
+          -o jsonpath='{.spec.template.spec.volumes[?(@.name==\"workload-socket\")].csi.driver}' \
+          2>/dev/null | grep -q 'csi.spiffe.io'"
+  check_output "ingress gateway CA_ADDR 指向 SPIRE socket（非 istiod）" \
+        "workload-spiffe-uds" \
+        kubectl -n istio-system get deploy istio-ingressgateway \
+          -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CA_ADDR")].value}'
+else
+  fail "istio-ingressgateway pod 未找到"
+fi
+# entry 存在 = Controller Manager 已讀到 ClusterSPIFFEID istio-ingressgateway 並建立 entry
+check_output "ingress gateway SPIRE entry 存在" \
+      "ingressgateway" \
+      "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
+
 # ─── 結果摘要 ─────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}══════════════════════════════${NC}"

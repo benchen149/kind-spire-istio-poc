@@ -13,6 +13,22 @@ spec:
           hpaSpec:
             minReplicas: 1
             maxReplicas: 1
+          overlays:
+            - kind: Deployment
+              name: istio-ingressgateway
+              patches:
+                # 預設 workload-socket 是 emptyDir，改成 SPIFFE CSI Driver volume
+                - path: spec.template.spec.volumes[name:workload-socket]
+                  value:
+                    name: workload-socket
+                    csi:
+                      driver: csi.spiffe.io
+                      readOnly: true
+                # cert 來源從 istiod 改為 SPIRE Agent socket
+                - path: spec.template.spec.containers[name:istio-proxy].env[name:CA_ADDR].value
+                  value: "unix:///run/secrets/workload-spiffe-uds/socket"
+                - path: spec.template.spec.containers[name:istio-proxy].env[name:PILOT_CERT_PROVIDER].value
+                  value: "spiffe"
     pilot:
       k8s:
         env:
