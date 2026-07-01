@@ -2,7 +2,15 @@
 
 PoC: External SPIRE as Istio mTLS CA on Kind, with OPA Gatekeeper enforcement
 
-架構細節請參閱 [docs/spire-istio-poc-summary.md](docs/spire-istio-poc-summary.md)。
+---
+
+## 文件
+
+| 文件 | 內容 |
+|------|------|
+| [docs/poc-spire-istio-summary.md](docs/poc-spire-istio-summary.md) | PoC 實作參考、設計決策、驗證指令 |
+| [docs/workload-identity-architecture.md](docs/workload-identity-architecture.md) | SPIFFE/SPIRE 概念架構、CA 比較、TTL 設定、DR 備份 |
+| [docs/istio-spire-migration-spec.md](docs/istio-spire-migration-spec.md) | Istio 維護者遷移操作指南（切換流程、維護成本考量）|
 
 ---
 
@@ -12,7 +20,7 @@ PoC: External SPIRE as Istio mTLS CA on Kind, with OPA Gatekeeper enforcement
 make        # 等同 make all，完整建立 PoC 環境
 ```
 
-執行順序：Kind cluster → SPIRE Server/Agent/Controller Manager → OPA Gatekeeper → Istio → 測試 workload
+執行順序：Kind cluster → SPIRE Server / Agent / Controller Manager → OPA Gatekeeper → Istio → 測試 workload
 
 ---
 
@@ -20,15 +28,15 @@ make        # 等同 make all，完整建立 PoC 環境
 
 | Target | 說明 |
 |--------|------|
-| `make` / `make all` | 完整 PoC 環境建立（依序執行所有步驟） |
+| `make` / `make all` | 完整 PoC 環境建立（依序執行所有步驟）|
 | `make cluster` | 建立 Kind cluster |
 | `make spire` | 啟動 SPIRE Server、Agent、Controller Manager |
 | `make gatekeeper` | 安裝 OPA Gatekeeper 與 Constraints |
-| `make istio` | 安裝 Istio（SPIFFE CSI Driver + SDS 整合） |
+| `make istio` | 安裝 Istio（SPIFFE CSI Driver + SDS 整合）|
 | `make deploy` | 部署測試 workload 並驗證 |
 | `make check` | Sanity check：驗證整體 PoC 架構是否正確建立 |
 | `make status` | 查看各元件運行狀態 |
-| `make clean` | 刪除 Kind cluster 並清理背景 process |
+| `make clean` | 刪除 Kind cluster、停止背景 process、清除 SPIRE Server 資料 |
 | `make help` | 顯示說明 |
 
 ---
@@ -55,14 +63,6 @@ make SPIRE_VERSION=1.10.0
 make GATEKEEPER_VERSION=3.19.0 gatekeeper
 ```
 
-**直接執行 script**（不透過 make）：
-
-```bash
-SPIRE_VERSION=1.10.0 ./scripts/01-start-spire-server.sh
-```
-
-未帶環境變數時，script 會自動 fallback 到內建預設值。
-
 ---
 
 ## 目錄結構
@@ -72,13 +72,13 @@ SPIRE_VERSION=1.10.0 ./scripts/01-start-spire-server.sh
 ├── Makefile                    # 單一進入點
 ├── versions.env                # 元件版本設定
 ├── kind/                       # Kind cluster 設定
-├── scripts/                    # 各步驟部署腳本（00~06）
-├── spire-server/               # SPIRE Server 設定
+├── scripts/                    # 各步驟部署腳本（00～08）
+├── spire-server/               # SPIRE Server 設定（server.conf）
 ├── spire/                      # SPIRE Agent Helm values、ClusterSPIFFEID
-├── istio/                      # Istio Operator 設定
+├── istio/                      # IstioOperator 設定、validation-gateway post-renderer
 ├── gatekeeper/
 │   ├── constraint-templates/   # OPA ConstraintTemplate CRD
 │   └── constraints/            # OPA Constraint 規則
-├── test/                       # 測試用 workload（good/bad）
-└── docs/                       # 架構文件與圖表
+├── test/                       # 測試用 workload（good / bad SA、PeerAuthentication、AuthorizationPolicy）
+└── docs/                       # 架構文件（見上方文件表）
 ```
