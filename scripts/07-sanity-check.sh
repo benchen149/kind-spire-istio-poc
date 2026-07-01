@@ -228,14 +228,39 @@ else
   fail "istioctl 未找到（路徑: $ISTIOCTL）"
 fi
 
-# ─── 12. Ingress Gateway SPIRE 整合 ──────────────────────────────────────
+# ─── 12. Trust Domain 一致性 ─────────────────────────────────────────────
+# 為何檢查：trust domain 是 SPIFFE identity 的命名空間根。
+# Istio 預設 trust domain 是 cluster.local；若沒有正確改為 poc.internal，
+# Envoy 收到 SPIRE 簽發的 spiffe://poc.internal/... cert 時，
+# 因 trust domain 不符合 Istio 的期望值而靜默拒絕，mTLS 驗證失效但不會明顯報錯。
+# 三個元件各自獨立設定 trust domain，需同時驗證才能排除部分錯誤的情況。
+section "12. Trust Domain 一致性"
+# Istio meshConfig.trustDomain 是 Envoy 接受 SVID 的判斷依據，
+# 值來自 IstioOperator meshConfig.trustDomain，寫入 istio-system/istio ConfigMap
+check_output "Istio meshConfig.trustDomain = poc.internal" \
+      "poc.internal" \
+      kubectl -n istio-system get configmap istio \
+        -o jsonpath='{.data.mesh}'
+# SPIRE Server SPIFFE ID prefix 必須對齊 Istio trust domain，
+# 否則 SVID 的 URI SAN 會是 spiffe://wrong-domain/... 造成 mTLS 拒絕
+check_output "SPIRE entry SPIFFE ID prefix = spiffe://poc.internal" \
+      "spiffe://poc.internal" \
+      "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
+# 外部流量進入 ingress gateway 時，TRUST_DOMAIN env 決定 Envoy 在 peer cert 中
+# 接受哪個 trust domain 的 SPIFFE URI；若與 SPIRE trust domain 不一致則拒絕連線
+check_output "Ingress gateway TRUST_DOMAIN env = poc.internal" \
+      "poc.internal" \
+      kubectl -n istio-system get deploy istio-ingressgateway \
+        -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="TRUST_DOMAIN")].value}'
+
+# ─── 13. Ingress Gateway SPIRE 整合 ──────────────────────────────────────
 # 為何檢查：ingress gateway 不走 sidecar injection（sidecar.istio.io/inject: false），
 # 必須透過 IstioOperator k8s.overlays 手動替換 workload-socket 為 CSI volume。
 # 只驗證 SPIRE entry 存在（不驗 active SVID）：ingress gateway 採 lazy cert 初始化，
 # 需有 TLS-configured Gateway resource 且流量通過後才會發 SDS 請求；
 # entry 存在代表 Controller Manager → SPIRE Server 這條鏈路已正確建立，
 # cert 將在第一筆 TLS 流量時由 SPIRE 即時簽發。
-section "12. Ingress Gateway SPIRE 整合"
+section "13. Ingress Gateway SPIRE 整合"
 # 驗證 CSI volume 已取代 emptyDir（socket 存在且是 Unix domain socket 類型）
 IGW_POD=$(kubectl get pod -n istio-system -l app=istio-ingressgateway \
           -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
