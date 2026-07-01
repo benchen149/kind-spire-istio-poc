@@ -4,18 +4,20 @@
 
 ## 元件清單
 
-| 元件 | 部署位置 | 版本 | 角色 |
+| 元件 | 部署位置 | 版本 / Image | 角色 |
 |---|---|---|---|
-| SPIRE Server | Ubuntu VM（本機） | 1.9.6 | Central trust authority，簽發 SVID |
-| SPIRE Agent | Kind cluster DaemonSet | 1.9.6 | Node attestation，暴露 Workload API socket |
-| SPIRE Controller Manager | 與 SPIRE Server 同機（見「SPIRE entry 管理方式」的部署位置說明） | 0.6.6 | 自動管理 SPIRE registration entry 生命週期 |
-| SPIFFE CSI Driver | Kind cluster DaemonSet（隨 SPIRE Agent chart 安裝） | — | 將 SPIRE Agent socket 以 CSI ephemeral volume 掛給各 workload |
+| SPIRE Server | Ubuntu VM（本機 host process） | `1.9.6`（binary） | Central trust authority，簽發 SVID |
+| SPIRE Agent | Kind cluster DaemonSet | `ghcr.io/spiffe/spire-agent:1.9.6` | Node attestation，暴露 Workload API socket |
+| SPIRE Controller Manager | 與 SPIRE Server 同機 Docker | `ghcr.io/spiffe/spire-controller-manager:0.6.6` | 自動管理 SPIRE registration entry 生命週期 |
+| SPIFFE CSI Driver | Kind cluster DaemonSet（隨 SPIRE Agent chart 安裝） | `ghcr.io/spiffe/spiffe-csi-driver:0.2.3` | 將 SPIRE Agent socket 以 CSI ephemeral volume 掛給各 workload |
+| CSI Node Driver Registrar | Kind cluster（SPIFFE CSI Driver sidecar） | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.9.4` | 向 kubelet 註冊 CSI driver |
 | ClusterSPIFFEID CRD | Kind in-cluster | — | 定義 entry 自動建立規則（template + selector） |
-| Kubernetes | Kind | 1.34 | 容器平台 |
-| Istio | Kind in-cluster | 1.29.4 | Service mesh，native sidecar 預設啟用 |
-| istiod | istio-system namespace | 1.29.4 | 憑證維持 Istio 預設 self-signed，不涉入 SPIRE（見下方「Istio × SPIRE 整合方式」說明） |
-| Envoy sidecar | 每個 workload pod | Istio 內建 | 透過 SPIFFE CSI Driver 直連 SPIRE Agent 的 SDS 取 cert，執行 mTLS |
-| OPA Gatekeeper | Kind in-cluster | v3.18.2 | 強制 SA 命名規則、SPIRE label、principal 格式驗證 |
+| Kubernetes | Kind | `1.34` | 容器平台 |
+| Istio istiod | istio-system namespace | `docker.io/istio/pilot:1.29.4` | 憑證維持 Istio 預設 self-signed，不涉入 SPIRE（見「Istio × SPIRE 整合方式」） |
+| Envoy sidecar | 每個 workload pod | `docker.io/istio/proxyv2:1.29.4` | 透過 SPIFFE CSI Driver 直連 SPIRE Agent 的 SDS 取 cert，執行 mTLS |
+| OPA Gatekeeper | Kind in-cluster | `openpolicyagent/gatekeeper:v3.18.2` | 強制 SA 命名規則、SPIRE label、principal 格式驗證 |
+| Test workload（payment-gateway） | istio-validation namespace | `curlimages/curl:8.10.1` | mTLS 發起方驗證 workload |
+| Test workload（payment-core） | istio-validation namespace | `kennethreitz/httpbin:latest` | mTLS 接收方，AuthorizationPolicy 驗證目標 |
 
 > **實作與本文件初版的差異**：本文件初版假設 istiod 可透過
 > `PILOT_CERT_PROVIDER=spiffe` 取得自身 SVID 成為 mesh CA/RA，但實測與查證
