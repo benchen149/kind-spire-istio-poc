@@ -175,37 +175,40 @@ check_output "payment-core-sa 的 SPIRE entry 存在" \
       "payment-core-sa" \
       "$SPIRE_BIN" entry show -socketPath "$SPIRE_SOCK"
 
-# ─── 11. Envoy SVID（SPIRE 簽發）─────────────────────────────────────────
+# ─── 11. Envoy SVID（SPIRE 簽發驗證）─────────────────────────────────────
 # 為何檢查：這是整個 PoC 的核心驗證，確認 cert 路徑是「Envoy → SPIRE Agent（CSI socket）
 # → SPIRE Server」，而非走 istiod CA。
-# istiod 負責注入 sidecar 和 xDS 設定，但不參與 cert 簽發；
-# 若 CA_ADDR / PILOT_CERT_PROVIDER 設定錯誤，Envoy 會靜默地改用 istiod cert，
-# 憑證 Issuer 從 "O=SPIFFE" 變成 "O=cluster.local"，mTLS 身份驗證失效。
+# 靜默失效情境：CA_ADDR / PILOT_CERT_PROVIDER 設定錯誤時，Envoy 改用 istiod cert，
+# Issuer 從 "O=SPIFFE" 變成 "O=cluster.local"，行為看似正常但 identity 來源錯誤。
 #
-# 實作說明：istioctl proxy-config secret 純文字表格不含 cert SAN，
-# 需加 -o json 後用 openssl x509 解析 cert chain 才能確認 Issuer 和 URI SAN。
+# 驗證對象：payment namespace 中所有 spiffe-managed=true 的 Running pod（通用，不寫死 pod 名稱）
+# 每個 pod 做兩項確認：
+#   1. Issuer 含 "SPIFFE"（排除 istiod 自簽 CA，其 Issuer 為 O=cluster.local）
+#   2. URI SAN = spiffe://poc.internal/...（確認 trust domain 與 SPIRE 對齊）
+# 需要 -o json + openssl x509 解析，istioctl 純文字表格不輸出 SAN 欄位。
 ISTIO_HOME="${ISTIO_HOME:-$HOME/.local/share/istio}"
 ISTIO_VERSION="${ISTIO_VERSION:-1.29.4}"
 ISTIOCTL="$ISTIO_HOME/istio-${ISTIO_VERSION}/bin/istioctl"
-# PATH 上的 istioctl 優先（使用者可能已全域安裝）
 command -v istioctl >/dev/null 2>&1 && ISTIOCTL="$(command -v istioctl)"
 
 section "11. Envoy SVID（SPIRE 簽發驗證）"
-# istiod 必須在線：負責 sidecar injection webhook，pod 重啟時若 istiod 掛掉，
-# 新 pod 不會被注入 Envoy sidecar，後續 SVID 驗證也毫無意義
 check "istiod pod 執行中" \
       bash -c "kubectl -n istio-system get pods -l app=istiod \
         --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
 
 if [[ -x "$ISTIOCTL" ]]; then
-  POD=$(kubectl get pod -n payment -l app=payment-gateway \
-        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-  if [[ -n "$POD" ]]; then
-    # 從 Envoy 的 active secret 中解析 cert chain，確認 URI SAN 包含正確的 trust domain
-    # URI SAN 格式：spiffe://<trustDomain>/ns/<ns>/sa/<sa>
-    # trust domain 用 poc.internal 而非 cluster.local（istiod 自簽 CA 的預設值）
-    SVID_SAN=$("$ISTIOCTL" proxy-config secret -n payment "$POD" -o json 2>/dev/null \
-      | python3 -c "
+  # payment namespace 內所有 spiffe-managed=true 的 Running pod
+  SPIFFE_PODS=$(kubectl get pod -n payment -l spiffe-managed=true \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+
+  if [[ -z "$SPIFFE_PODS" ]]; then
+    fail "payment namespace 中找不到 spiffe-managed=true 且 Running 的 pod"
+  else
+    while IFS= read -r POD; do
+      # 從 Envoy active secret 解出 cert chain，同時取 Issuer 和 URI SAN
+      CERT_INFO=$("$ISTIOCTL" proxy-config secret -n payment "$POD" -o json 2>/dev/null \
+        | python3 -c "
 import json,sys,base64,subprocess
 d=json.load(sys.stdin)
 for s in d.get('dynamicActiveSecrets',[]):
@@ -213,16 +216,27 @@ for s in d.get('dynamicActiveSecrets',[]):
         pem=base64.b64decode(s['secret']['tlsCertificate']['certificateChain']['inlineBytes']).decode()
         r=subprocess.run(['openssl','x509','-text','-noout'],input=pem,capture_output=True,text=True)
         for line in r.stdout.splitlines():
-            if 'URI:spiffe://' in line: print(line.strip())
+            if 'Issuer:' in line or 'URI:spiffe://' in line: print(line.strip())
     except: pass
 " 2>/dev/null)
-    if echo "$SVID_SAN" | grep -q "poc.internal"; then
-      pass "payment-gateway Envoy 持有 SPIRE 簽發的 SVID ($SVID_SAN)"
-    else
-      fail "payment-gateway Envoy 未持有 SPIRE 簽發的 SVID（SAN: ${SVID_SAN:-empty}）"
-    fi
-  else
-    fail "payment-gateway pod 未找到（無法驗證 SVID）"
+
+      ISSUER=$(echo "$CERT_INFO" | grep "Issuer:" | head -1)
+      SVID_SAN=$(echo "$CERT_INFO" | grep "URI:spiffe://")
+
+      # Issuer 必須含 SPIFFE（由 SPIRE CA 簽發）；istiod 自簽 CA 的 Issuer 是 O=cluster.local
+      if echo "$ISSUER" | grep -qi "SPIFFE"; then
+        pass "$POD: Issuer = SPIRE CA ($ISSUER)"
+      else
+        fail "$POD: Issuer 非 SPIRE（${ISSUER:-empty}），可能仍走 istiod CA"
+      fi
+
+      # URI SAN 必須含正確 trust domain，排除 trust domain 設定錯誤的靜默失效
+      if echo "$SVID_SAN" | grep -q "poc.internal"; then
+        pass "$POD: SVID SAN = $SVID_SAN"
+      else
+        fail "$POD: SVID SAN 不含 poc.internal（${SVID_SAN:-empty}）"
+      fi
+    done <<< "$SPIFFE_PODS"
   fi
 else
   fail "istioctl 未找到（路徑: $ISTIOCTL）"
