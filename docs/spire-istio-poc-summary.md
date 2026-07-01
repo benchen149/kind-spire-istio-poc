@@ -144,14 +144,15 @@ SPIRE Server（外部 VM）
 
 以下為完整的運作時序，涵蓋從 Deployment apply 到 App container 啟動的六個 Phase：
 
-| Phase | 說明 | 主要元件 |
-|---|---|---|
-| A — Admission | kubectl apply 觸發 mutating webhook 注入 Envoy sidecar，再由 validating webhook 四層驗證 | istiod（mutating）→ OPA Gatekeeper（validating） |
-| B — Entry 自動建立 | Controller Manager 偵測 pod、建立 SPIRE entry | Controller Manager → SPIRE Server |
-| C — Node Attestation | SPIRE Agent 啟動時驗證 node 身份 | SPIRE Agent → SPIRE Server → k8s TokenReview |
-| D — CSI socket 就緒 | wait-for-spire-socket initContainer 等待 SPIFFE CSI Driver 掛載的 socket 出現 | CSI Driver → SPIRE Agent |
-| E — Envoy SDS | Envoy 透過 CSI socket 直連 SPIRE Agent 取 cert（cert 路徑完全繞過 istiod） | Envoy → SPIRE Agent → SPIRE Server |
-| F — App 啟動 + mTLS | App container 啟動，所有流量由 Envoy mTLS 保護 | Envoy + App |
+| Phase | 步驟 | 主要元件 | 說明 |
+|---|---|---|---|
+| A — Admission | 1–7 | istiod（mutating）→ OPA Gatekeeper（validating） | `kubectl apply` → istiod mutating webhook 注入 Envoy sidecar + CSI volume → OPA validating webhook 執行 SA 命名 / spiffe label / 禁 default SA 三層規則 → admit |
+| B — Entry 自動建立 | 8–10 | Controller Manager → SPIRE Server | Controller Manager 偵測到新 pod，依 ClusterSPIFFEID 向 SPIRE Server 建立 SPIFFE entry |
+| C — Node Attestation | 11–13 | SPIRE Agent → SPIRE Server → k8s TokenReview | SPIRE Agent 以 k8s_psat token 完成 node attestation，取得 trust bundle；節點上的 `agent.sock` 就緒 |
+| D — CSI socket 就緒 | — | CSI Driver → SPIRE Agent | CSI Driver 將 `agent.sock` bind mount 進 pod；istio-proxy initContainer 等待 socket 出現後繼續 |
+| E — Envoy SDS | 14–17 | Envoy → SPIRE Agent → SPIRE Server | Envoy 透過 CSI socket 向 SPIRE Agent 請求 SVID；cert 路徑繞過 istiod（istiod 只推 xDS config，不參與 cert 簽發） |
+| F — App 啟動 + mTLS | 18–19 | Envoy + App | Envoy 就緒後 app container 啟動；所有流量以 SPIFFE mTLS 雙向驗證 |
+| Rotation | — | SPIRE Agent → Envoy | SVID 到期前 SPIRE Agent 主動推送新 cert，Envoy 熱換不中斷連線 |
 
 > 注意：實測確認 Istio 並不存在 `PILOT_CERT_PROVIDER=spiffe` 這個設定值
 > （Istio 原始碼 `pkg/config/constants/constants.go` 中合法值僅有
@@ -223,18 +224,6 @@ sequenceDiagram
 
     Note over SA,EN: SVID rotate - Agent pushes new SVID before TTL expires
 ```
-
-### 步驟說明
-
-| Phase | 步驟 | 說明 |
-|---|---|---|
-| A — Admission | 1–7 | `kubectl apply` → istiod mutating webhook 注入 Envoy sidecar + CSI volume → OPA validating webhook 執行 SA 命名 / spiffe label / 禁 default SA 三層規則 → admit |
-| B — Entry creation | 8–10 | Controller Manager 偵測到新 pod，依 ClusterSPIFFEID 向 SPIRE Server 建立 SPIFFE entry |
-| C — Node Attestation | 11–13 | SPIRE Agent 以 k8s_psat token 完成 node attestation，取得 trust bundle；節點上的 `agent.sock` 就緒 |
-| D — CSI socket ready | 無編號 | CSI Driver 將 `agent.sock` bind mount 進 pod；istio-proxy initContainer 等待 socket 出現後繼續 |
-| E — Envoy SDS | 14–17 | Envoy 透過 CSI socket 向 SPIRE Agent 請求 SVID；cert 路徑繞過 istiod（istiod 只推 xDS，不參與簽發） |
-| F — App start | 18–19 | Envoy 就緒後 app container 啟動；所有流量以 SPIFFE mTLS 雙向驗證 |
-| Rotation | 無編號 | SVID 到期前 SPIRE Agent 主動推送新 cert，Envoy 熱換不中斷連線 |
 
 ---
 
