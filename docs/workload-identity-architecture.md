@@ -301,18 +301,49 @@ SPIRE Server 持有整條憑證鏈的核心資料，需備份以下項目：
 | 備份項目 | 內容 | 重要性 | 備份方式 |
 |---|---|---|---|
 | **Datastore**（sqlite3 / PostgreSQL） | Signing CA 私鑰、trust bundle、所有 entries、node attestation records | 🔴 最關鍵 | 定期快照；PostgreSQL 用標準 DB backup |
-| **Trust bundle**（`bundle.crt`） | Root CA 公鑰，Agent bootstrap 與 federation 需要 | 🔴 關鍵 | `spire-server bundle show` 匯出，離線保存 |
+| **Trust bundle** | Root CA 公鑰，Agent bootstrap 與 federation 需要 | 🔴 關鍵 | `spire-server bundle show` 匯出，離線保存 |
+| **keys.json** | SPIRE Server 用於簽發 Signing CA 的私鑰 | 🔴 關鍵 | 與 Datastore 同目錄，一併備份 |
 | **server.conf** | SPIRE Server 設定檔 | 🟡 中 | 已在 git（`spire-server/server.conf`） |
 | **ClusterSPIFFEID CRD** | Entry 自動建立規則 | 🟡 中 | 已在 git（`spire/cluster-spiffeid.yaml`） |
+
+**本 PoC 實際資料位置：**
+
+啟動腳本（`01-start-spire-server.sh`）會將 `spire-server/server.conf` 中的 `/opt/spire` 路徑替換為 `$SPIRE_HOME`（預設 `~/.local/share/spire/`）再啟動：
+
+```
+~/.local/share/spire/data/server/
+├── datastore.sqlite3          # 主資料庫（entries、CA 資料、trust bundle）
+├── datastore.sqlite3-shm      # SQLite WAL shared memory
+├── datastore.sqlite3-wal      # SQLite Write-Ahead Log
+├── journal.pem                # CA 憑證歷史紀錄
+└── keys.json                  # Server 私鑰（權限 600）
+```
+
+Trust bundle 匯出：
+
+```bash
+spire-server bundle show \
+  -socketPath /tmp/spire-server/private/api.sock \
+  > trust-bundle.pem
+```
+
+**⚠️ `make clean` 注意：**
+
+`make clean` 只清除 `/tmp/spire-server/`（socket），**不清除** `~/.local/share/spire/data/`。
+若需要從 0 完整重置（清除 CA 資料重新 bootstrap），需額外執行：
+
+```bash
+rm -rf ~/.local/share/spire/data/
+```
 
 **還原優先順序：**
 
 ```
-1. 還原 Datastore → SPIRE Server 可完整重啟，所有 entries 保留
+1. 還原 Datastore（含 keys.json）→ SPIRE Server 可完整重啟，所有 entries 保留
 2. 若 Datastore 遺失 → 還原 trust bundle，重新 bootstrap SPIRE Server
    → Controller Manager 會自動重建所有 entries（依 ClusterSPIFFEID）
    → 需重新分發新 trust bundle 給所有 federated 方
-3. 若 trust bundle 也遺失 → 完整重新 bootstrap，影響範圍最大
+3. 若全部遺失 → 完整重新 bootstrap，影響範圍最大
 ```
 
-> **PoC 目前狀態**：使用 sqlite3，資料存於 `/tmp/spire-server/data/`，`make clean` 會清除。Production 需改用 PostgreSQL 並啟用定期備份。
+> **Production**：sqlite3 不支援多副本，需改用 PostgreSQL 並啟用定期備份。`keys.json` 建議額外存放於 KMS 或 HSM，不應僅依賴檔案系統備份。
