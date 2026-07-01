@@ -562,6 +562,45 @@ istioctl pc secret -n payment "$POD" -o json | \
 #   URI:spiffe://poc.internal/ns/payment/sa/payment-gateway-sa
 ```
 
+### SPIFFE CSI Driver Volume：Production 考量
+
+CSI volume 是 istiod mutating webhook 透過 `spire` template 注入進 pod spec 的。在 production 有三個必須注意的點：
+
+**1. SPIFFE CSI Driver DaemonSet 必須先於 workload 就緒**
+
+kubelet 啟動 pod 時會向該 node 上的 CSI driver（`csi.spiffe.io`）要求 volume mount。若 DaemonSet 尚未在該 node 上 Running，pod 卡在 `ContainerCreating`，錯誤訊息：
+
+```
+MountVolume.SetUp failed for volume "workload-socket":
+kubernetes.io/csi: attacher.MountDevice failed to create newCsiDriverClient:
+driver name csi.spiffe.io not found in the list of registered CSI drivers
+```
+
+緩解方式：
+- Helm 安裝 SPIRE Agent chart 時加 `--wait`，或 `kubectl rollout status daemonset/spire-agent -n spire` 確認就緒再繼續 deploy workload
+- SPIFFE CSI Driver DaemonSet 加 `PodDisruptionBudget`，保護滾動升級時不中斷
+
+**2. Opt-in 粒度維持 annotation，不改為 mesh-wide 強制**
+
+`inject.istio.io/templates: "sidecar,spire"` 是 workload 層級的 opt-in。建議維持此方式：
+
+| namespace | 建議 | 原因 |
+|---|---|---|
+| `kube-system` / `istio-system` | 不加 annotation | 系統元件不需要 SPIRE identity |
+| `spire` / `gatekeeper-system` | 不加 annotation | 基礎設施元件自管身份 |
+| business workload namespace | 加 annotation | 需要 mTLS + SPIRE SVID |
+
+若強制所有 pod 套用 `spire` template，基礎設施 pod 會嘗試掛載 CSI volume，若 CSI Driver 尚未就緒或 namespace 未被 SPIRE 管理，會導致啟動失敗。
+
+**3. SPIRE Agent socket 路徑與 UID 權限**
+
+SPIFFE CSI Driver 透過 hostPath bind mount 把 SPIRE Agent socket 暴露給 pod。Production 注意事項：
+
+- 若 SPIRE Agent 以 non-root UID 執行，需確認 socket file permission 讓 Envoy sidecar 的 UID 可讀（建議設 `g+rw` 並讓兩者同 GID，或明確設 `0666`）
+- SPIRE Agent 滾動升級期間 socket 短暫消失，會導致新 pod 的 Envoy SDS 請求失敗、pod 卡在 init 阶段；建議 DaemonSet 採 `maxUnavailable: 1`，並監控 CSI volume mount error
+
+---
+
 ### 重要實測發現：PERMISSIVE mTLS 模式下 AuthorizationPolicy 會誤判拒絕
 
 即使 Envoy 已透過 SPIRE 簽發的憑證完成 TLS handshake、debug log 也顯示
