@@ -40,7 +40,7 @@ check   "kubectl 可連線 kind-spire-istio-poc" \
 # ─── 2. SPIRE Server (host process) ───────────────────────────────────────
 section "2. SPIRE Server（host）"
 check   "spire-server process 執行中" \
-        bash -c "pgrep -qf 'spire-server run'"
+        pgrep -f 'spire-server run'
 check   "SPIRE Server socket 存在 ($SPIRE_SOCK)" \
         test -S "$SPIRE_SOCK"
 check   "SPIRE Server healthcheck 通過" \
@@ -127,7 +127,12 @@ check_output "payment-core-sa 的 SPIRE entry 存在" \
 
 # ─── 11. Envoy SVID（SPIRE 簽發）─────────────────────────────────────────
 section "11. Envoy SVID（SPIRE 簽發驗證）"
-if command -v istioctl >/dev/null 2>&1; then
+if ! kubectl -n istio-system get pods -l app=istiod --field-selector=status.phase=Running \
+     2>/dev/null | grep -q Running; then
+  echo -e "  ${YELLOW}－${NC} istiod 未安裝，略過 SVID 驗證（Istio 為選配元件）"
+elif ! command -v istioctl >/dev/null 2>&1; then
+  echo -e "  ${YELLOW}－${NC} istioctl 未安裝，略過 SVID 驗證"
+else
   POD=$(kubectl get pod -n payment -l app=payment-gateway \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   if [[ -n "$POD" ]]; then
@@ -137,8 +142,6 @@ if command -v istioctl >/dev/null 2>&1; then
   else
     echo -e "  ${YELLOW}－${NC} payment-gateway pod 未找到，略過 SVID 驗證"
   fi
-else
-  echo -e "  ${YELLOW}－${NC} istioctl 未安裝，略過 SVID 驗證"
 fi
 
 # ─── 結果摘要 ─────────────────────────────────────────────────────────────
