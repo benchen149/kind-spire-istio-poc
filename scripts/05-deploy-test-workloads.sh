@@ -19,7 +19,7 @@ kubectl wait pod -n payment -l app=payment-gateway --for=condition=ready --timeo
 kubectl wait pod -n payment -l app=payment-core --for=condition=ready --timeout=120s
 
 echo "=== SPIRE entries（應自動建立，1 SA = 1 entry）==="
-/opt/spire/bin/spire-server entry show -socketPath /tmp/spire-server/private/api.sock
+"${SPIRE_HOME:-$HOME/.local/share/spire}/bin/spire-server" entry show -socketPath /tmp/spire-server/private/api.sock
 
 echo "=== 驗證 Envoy 憑證由 SPIRE 簽發 ==="
 POD=$(kubectl get pod -n payment -l app=payment-gateway -o jsonpath='{.items[0].metadata.name}')

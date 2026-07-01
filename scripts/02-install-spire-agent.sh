@@ -15,7 +15,7 @@ KIND_GATEWAY=$(docker network inspect kind --format '{{(index .IPAM.Config 1).Ga
 echo "SPIRE Server 位址：${KIND_GATEWAY}:${SPIRE_SERVER_PORT}"
 
 # Step 3：將 SPIRE Server 的 trust bundle 寫成 ConfigMap，讓 Agent bootstrap 時信任外部 Server
-/opt/spire/bin/spire-server bundle show -socketPath /tmp/spire-server/private/api.sock -format pem > /tmp/spire-bundle.crt
+"${SPIRE_HOME:-$HOME/.local/share/spire}/bin/spire-server" bundle show -socketPath /tmp/spire-server/private/api.sock -format pem > /tmp/spire-bundle.crt
 kubectl create configmap spire-bundle -n "$NAMESPACE" \
   --from-file=bundle.crt=/tmp/spire-bundle.crt \
   --dry-run=client -o yaml | kubectl apply -f -

@@ -5,7 +5,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CM_HOME="/opt/spire-controller-manager"
+CM_HOME="${CM_HOME:-$HOME/.local/share/spire-controller-manager}"
+SPIRE_HOME="${SPIRE_HOME:-$HOME/.local/share/spire}"
 IMAGE="ghcr.io/spiffe/spire-controller-manager:${SPIRE_CM_VERSION:-0.6.6}"
 
 mkdir -p "$CM_HOME/conf"
@@ -18,7 +19,7 @@ docker run -d --name spire-controller-manager \
   -e ENABLE_WEBHOOKS=false \
   -e KUBECONFIG=/kubeconfig \
   -v "$CM_HOME/conf/config.yaml:/config.yaml:ro" \
-  -v /opt/spire/conf/server/kubeconfig:/kubeconfig:ro \
+  -v "${SPIRE_HOME}/conf/server/kubeconfig:/kubeconfig:ro" \
   -v /tmp/spire-server/private:/tmp/spire-server/private \
   "$IMAGE" \
   --config /config.yaml

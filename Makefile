@@ -11,7 +11,12 @@ SPIRE_AGENT_CHART_VERSION ?= 0.21.0
 SPIRE_CM_VERSION          ?= 0.6.6
 GATEKEEPER_VERSION        ?= 3.18.2
 
+# 安裝路徑（預設使用者家目錄，無需 sudo；可覆蓋：make SPIRE_HOME=/opt/spire）
+SPIRE_HOME ?= $(HOME)/.local/share/spire
+CM_HOME    ?= $(HOME)/.local/share/spire-controller-manager
+
 export SPIRE_VERSION SPIRE_CRDS_CHART_VERSION SPIRE_AGENT_CHART_VERSION SPIRE_CM_VERSION GATEKEEPER_VERSION
+export SPIRE_HOME CM_HOME
 
 .PHONY: all cluster spire gatekeeper deploy clean status help
 
@@ -42,7 +47,7 @@ status:  ## 查看環境狀態
 	@echo "=== Kind cluster ==="
 	@kubectl cluster-info --context kind-spire-istio-poc 2>/dev/null || echo "  not running"
 	@echo "=== SPIRE Server ==="
-	@/opt/spire/bin/spire-server healthcheck -socketPath /tmp/spire-server/private/api.sock 2>/dev/null || echo "  not running"
+	@$(SPIRE_HOME)/bin/spire-server healthcheck -socketPath /tmp/spire-server/private/api.sock 2>/dev/null || echo "  not running"
 	@echo "=== SPIRE Controller Manager ==="
 	@docker ps --filter name=spire-controller-manager --format "  {{.Status}}" 2>/dev/null || echo "  not running"
 	@echo "=== Gatekeeper ==="

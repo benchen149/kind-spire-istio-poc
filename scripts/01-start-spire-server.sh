@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SPIRE_VERSION="${SPIRE_VERSION:-1.9.6}"
-SPIRE_HOME="/opt/spire"
+SPIRE_HOME="${SPIRE_HOME:-$HOME/.local/share/spire}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "$SPIRE_HOME"/bin "$SPIRE_HOME"/conf/server "$SPIRE_HOME"/data/server
@@ -25,7 +25,7 @@ fi
 kubectl config view --minify --flatten --raw > "$SPIRE_HOME/conf/server/kubeconfig"
 chmod 600 "$SPIRE_HOME/conf/server/kubeconfig"
 
-cp "$REPO_ROOT/spire-server/server.conf" "$SPIRE_HOME/conf/server/server.conf"
+sed "s|/opt/spire|${SPIRE_HOME}|g" "$REPO_ROOT/spire-server/server.conf" > "$SPIRE_HOME/conf/server/server.conf"
 
 # 找出 kind docker network 的 gateway IP，供 Controller Manager / Agent 連線使用
 KIND_GATEWAY=$(docker network inspect kind --format '{{(index .IPAM.Config 1).Gateway}}')
