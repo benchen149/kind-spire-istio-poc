@@ -58,9 +58,8 @@ kind-spire-istio-poc/
 │   └── 08-sanity-check.sh          # 14 section 全面健康檢查（make check）
 │
 └── docs/
-    ├── spire-istio-poc-summary.md  # 本文件
-    ├── spire-istio-sequence.drawio # draw.io 序列圖（六個 Phase 色塊）
-    └── spire-istio-sequence.png    # 匯出 PNG
+    ├── spire-istio-poc-summary.md         # 本文件
+    └── workload-identity-architecture.md  # SPIFFE ID / SPIRE Entry / CA 架構比較
 ```
 
 ---
