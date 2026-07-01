@@ -2,6 +2,29 @@
 
 SPIFFE ID、SPIRE Entry、ClusterSPIFFEID、agent.sock 的概念與運作方式，以及 Istio 自管 CA 與 SPIRE 作為 CA 兩種架構的比較。
 
+## 目錄
+
+- [SPIFFE ID](#spiffe-id)
+- [SPIRE Entry](#spire-entry)
+  - [簽發流程](#簽發流程)
+  - [SVID 輪替](#svid-輪替)
+- [ClusterSPIFFEID](#clusterspiffeid)
+  - [本 PoC 的 ClusterSPIFFEID](#本-poc-的-clusterspiffeid)
+  - [欄位說明](#欄位說明)
+  - [雙層 selector 的用意](#雙層-selector-的用意)
+- [agent.sock（SPIFFE Workload API Socket）](#agentsockspiffe-workload-api-socket)
+  - [路徑鏈](#路徑鏈)
+  - [Socket 上跑的協定](#socket-上跑的協定)
+  - [SPIRE Agent 如何驗證 caller](#spire-agent-如何驗證-caller)
+  - [為什麼用 CSI Driver 而非 hostPath 直接掛](#為什麼用-csi-driver-而非-hostpath-直接掛)
+- [三者關係總結](#三者關係總結)
+- [Istio 自管 CA vs SPIRE 作為 CA](#istio-自管-ca-vs-spire-作為-ca)
+- [CA 憑證 TTL 設定整理](#ca-憑證-ttl-設定整理)
+  - [架構一：Istio 自管 CA（cacerts）](#架構一istio-自管-cacacerts)
+  - [架構二：SPIRE 作為 CA（本 PoC）](#架構二spire-作為-ca本-poc)
+  - [SPIRE Server 可用性對 SVID 的影響](#spire-server-可用性對-svid-的影響)
+  - [架構二：SPIRE 災難還原備份項目](#架構二spire-災難還原備份項目)
+
 ---
 
 ## SPIFFE ID

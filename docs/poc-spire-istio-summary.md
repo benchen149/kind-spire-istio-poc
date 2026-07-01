@@ -1,5 +1,24 @@
 # [PoC] SPIRE × Istio mTLS — Kind 本地驗證環境
 
+## 目錄
+
+- [Repo 目錄結構](#repo-目錄結構)
+- [元件清單](#元件清單)
+- [架構圖（文字版）](#架構圖文字版)
+- [SPIFFE ID 管理策略](#spiffe-id-管理策略)
+- [Node Attestation 方式](#node-attestation-方式)
+- [DataStore 說明](#datastore-說明)
+- [Trust Domain 設定](#trust-domain-設定)
+- [Istio × SPIRE 整合方式](#istio--spire-整合方式)
+- [User Namespace 自建 IngressGateway 注意事項](#user-namespace-自建-ingressgateway-注意事項)
+- [Istio Revision 安裝與 Namespace Injection Label](#istio-revision-安裝與-namespace-injection-label)
+- [優點](#優點)
+- [缺點](#缺點)
+- [風險](#風險)
+- [Out of Scope（Production 階段）](#out-of-scopeproduction-階段)
+- [架構決策紀錄（ADR）](#架構決策紀錄adr)
+- [OPA Gatekeeper v3.18.2 Enhancement](#opa-gatekeeper-v3182-enhancement)
+
 ---
 
 ## Repo 目錄結構

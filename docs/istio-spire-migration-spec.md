@@ -4,6 +4,24 @@
 
 本文件以 **Istio 維護者視角**出發，假設 SPIRE 基礎設施由獨立團隊建置，Istio 側需要知道「要向 SPIRE 拿什麼資訊」、「要改哪些設定」、以及「現有元件的影響範圍」。
 
+## 目錄
+
+- [一、SPIRE 團隊需提供的資訊與元件](#一spire-團隊需提供的資訊與元件)
+- [二、Istio 安裝層變更](#二istio-安裝層變更)
+  - [2.1 移除 cacerts Secret](#21-移除-cacerts-secret)
+  - [2.2 IstioOperator 必要變更](#22-istiooperator-必要變更)
+  - [2.3 變更對照表](#23-變更對照表)
+- [三、元件影響清單](#三元件影響清單)
+  - [3.1 istio-ingressgateway（istiod 管理）](#31-istio-ingressgatewayistiod-管理)
+  - [3.2 User Namespace IngressGateway（Helm 安裝）](#32-user-namespace-ingressgatewayhel-安裝)
+  - [3.3 有 Sidecar 的 Workload](#33-有-sidecar-的-workload)
+- [四、AuthorizationPolicy Principal 格式變更（Breaking Change）](#四authorizationpolicy-principal-格式變更breaking-change)
+- [五、PeerAuthentication 必須為 STRICT](#五peerauthentication-必須為-strict)
+- [六、切換流程](#六切換流程)
+- [七、App 使用者需知](#七app-使用者需知)
+- [八、Istio 維護者驗證清單](#八istio-維護者驗證清單)
+- [九、切換後的維護成本考量](#九切換後的維護成本考量)
+
 ---
 
 ## 一、SPIRE 團隊需提供的資訊與元件
