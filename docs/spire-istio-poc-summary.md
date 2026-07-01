@@ -791,6 +791,52 @@ Gateway Envoy 不會主動發 SDS 請求，需有 TLS-configured `Gateway` resou
 □ 確認 SPIRE entry 建立：spire-server entry show | grep <namespace>
 ```
 
+### 透過 ArgoCD 部署的替代方案
+
+ArgoCD Application CRD 的 Helm source 不支援 `--post-renderer`，需改用以下其中一種方式：
+
+**方案 A：Kustomize + helmCharts（推薦，ArgoCD 原生支援）**
+
+在 git repo 放 `kustomization.yaml`，以 JSON6902 `op: replace` 替換整個 volume entry（不會產生 emptyDir + csi 並存問題）：
+
+```yaml
+# kustomization.yaml
+helmCharts:
+- name: istio-ingress
+  releaseName: validation-ingressgateway
+  namespace: istio-validation
+  valuesFile: values.yaml
+
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/template/spec/volumes/0
+      value:
+        name: workload-socket
+        csi:
+          driver: csi.spiffe.io
+          readOnly: true
+  target:
+    kind: Deployment
+    name: validation-ingressgateway
+```
+
+ArgoCD Application 改為 Kustomize source，不再使用 Helm source。缺點：`/volumes/0` 依賴 index 不變，chart 升級時需確認 volume 順序。
+
+**方案 B：ArgoCD Config Management Plugin（CMP）**
+
+在 `argocd-repo-server` 加 sidecar，把 post-renderer script 包成 plugin，Application 指定 `source.plugin.name`。最靈活，但需要修改 ArgoCD 本身的部署，維護成本較高。
+
+**方案 C：Pre-rendered manifests**
+
+CI pipeline 離線執行 `helm template + post-renderer`，commit 靜態 YAML 到 git，ArgoCD 直接 apply。不需要任何 plugin，但每次 chart 或 values 更新都要重新渲染並 commit。
+
+| 方案 | 適用場景 |
+|---|---|
+| A（Kustomize + helmCharts） | 希望完全 GitOps，chart 版本升級自動同步 |
+| B（CMP） | 需要複雜 patch 邏輯、有能力改 ArgoCD infra |
+| C（Pre-rendered） | 快速驗證、或 chart 不常更新 |
+
 ---
 
 ## Istio Revision 安裝與 Namespace Injection Label
