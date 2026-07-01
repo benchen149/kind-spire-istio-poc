@@ -81,11 +81,11 @@ SPIRE Server（外部 VM）
 
 | Phase | 說明 | 主要元件 |
 |---|---|---|
-| A — OPA Admission | Deployment apply 時四層驗證 | OPA Gatekeeper |
+| A — Admission | kubectl apply 觸發 mutating webhook 注入 Envoy sidecar，再由 validating webhook 四層驗證 | istiod（mutating）→ OPA Gatekeeper（validating） |
 | B — Entry 自動建立 | Controller Manager 偵測 pod、建立 SPIRE entry | Controller Manager → SPIRE Server |
 | C — Node Attestation | SPIRE Agent 啟動時驗證 node 身份 | SPIRE Agent → SPIRE Server → k8s TokenReview |
 | D — CSI socket 就緒 | wait-for-spire-socket initContainer 等待 SPIFFE CSI Driver 掛載的 socket 出現 | CSI Driver → SPIRE Agent |
-| E — Envoy SDS | Envoy 透過 SPIFFE CSI Driver 直連 SPIRE Agent 取得 cert（不經過 istiod） | Envoy → SPIRE Agent → SPIRE Server |
+| E — Envoy SDS | Envoy 透過 CSI socket 直連 SPIRE Agent 取 cert（cert 路徑完全繞過 istiod） | Envoy → SPIRE Agent → SPIRE Server |
 | F — App 啟動 + mTLS | App container 啟動，所有流量由 Envoy mTLS 保護 | Envoy + App |
 
 > 注意：實測確認 Istio 並不存在 `PILOT_CERT_PROVIDER=spiffe` 這個設定值
@@ -101,15 +101,18 @@ SPIRE Server（外部 VM）
 sequenceDiagram
     autonumber
     participant Kind as Kind cluster
+    participant IS  as istiod
     participant OPA as OPA Gatekeeper
     participant CM  as Controller Manager
     participant SS  as SPIRE Server
     participant SA  as SPIRE Agent+CSI
-    participant EN  as Envoy
+    participant EN  as Envoy sidecar
 
     rect rgb(238, 244, 255)
-        Note over Kind,EN: Phase A - OPA Admission
-        Kind->>OPA: kubectl apply Deployment
+        Note over Kind,EN: Phase A - Admission (mutating then validating)
+        Kind->>IS: kubectl apply Deployment (mutating webhook)
+        IS-->>Kind: inject Envoy (spire template + CSI volume)
+        Kind->>OPA: validating webhook
         OPA->>OPA: L1 SA naming rule
         OPA->>OPA: L2 spiffe-managed label
         OPA->>OPA: L3 no default SA
@@ -138,7 +141,8 @@ sequenceDiagram
     end
 
     rect rgb(255, 255, 238)
-        Note over Kind,EN: Phase E - Envoy SDS direct to SPIRE Agent
+        Note over Kind,EN: Phase E - Envoy SDS (cert path bypasses istiod)
+        Note over IS,EN: istiod distributes xDS config (routes/policy) - cert path is direct to SPIRE
         EN->>SA: SDS request via CSI socket
         SA->>SS: CSR relay
         SS-->>SA: signed SVID
