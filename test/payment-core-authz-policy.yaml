@@ -9,7 +9,7 @@ apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
   name: payment-core-policy
-  namespace: payment
+  namespace: istio-validation
 spec:
   selector:
     matchLabels:
@@ -19,4 +19,4 @@ spec:
     - from:
         - source:
             principals:
-              - "poc.internal/ns/payment/sa/payment-gateway-sa"
+              - "poc.internal/ns/istio-validation/sa/payment-gateway-sa"

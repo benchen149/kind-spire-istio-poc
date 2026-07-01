@@ -139,26 +139,27 @@ section "8. ClusterSPIFFEID"
 check "ClusterSPIFFEID 'istio-workloads' 存在" \
       kubectl get clusterspiffeid istio-workloads
 
-# ─── 9. Payment namespace + workloads ─────────────────────────────────────
-# 為何檢查：payment namespace 是本 PoC 的測試業務命名空間。
+# ─── 9. istio-validation namespace + workloads ────────────────────────────
+# 為何檢查：istio-validation 是本 PoC 的驗證命名空間，同時承載測試 workload
+# （payment-gateway / payment-core）與 user-namespace ingress gateway。
 # 兩個 label 是 PoC 的核心機制：
 #   spiffe-managed=true → ClusterSPIFFEID selector 條件，缺少則 Controller Manager 不建 entry
 #   istio-injection=enabled → istiod mutating webhook 注入 Envoy sidecar 的條件
 # pod Ready 狀態確認 CSI volume mount 成功（pod 卡在 ContainerCreating 表示 CSI Driver 有問題）
-section "9. Payment namespace + test workloads"
-check "payment namespace 存在" \
-      kubectl get namespace payment
-check_output "payment namespace label spiffe-managed=true" \
+section "9. istio-validation namespace + test workloads"
+check "istio-validation namespace 存在" \
+      kubectl get namespace istio-validation
+check_output "istio-validation namespace label spiffe-managed=true" \
       "true" \
-      kubectl get namespace payment -o jsonpath='{.metadata.labels.spiffe-managed}'
-check_output "payment namespace label istio-injection=enabled" \
+      kubectl get namespace istio-validation -o jsonpath='{.metadata.labels.spiffe-managed}'
+check_output "istio-validation namespace label istio-injection=enabled" \
       "enabled" \
-      kubectl get namespace payment -o jsonpath='{.metadata.labels.istio-injection}'
+      kubectl get namespace istio-validation -o jsonpath='{.metadata.labels.istio-injection}'
 check "payment-gateway pod Ready" \
-      bash -c "kubectl -n payment get pods -l app=payment-gateway \
+      bash -c "kubectl -n istio-validation get pods -l app=payment-gateway \
         --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
 check "payment-core pod Ready" \
-      bash -c "kubectl -n payment get pods -l app=payment-core \
+      bash -c "kubectl -n istio-validation get pods -l app=payment-core \
         --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
 
 # ─── 10. SPIRE entries ────────────────────────────────────────────────────
@@ -197,17 +198,17 @@ check "istiod pod 執行中" \
         --field-selector=status.phase=Running 2>/dev/null | grep -q Running"
 
 if [[ -x "$ISTIOCTL" ]]; then
-  # payment namespace 內所有 spiffe-managed=true 的 Running pod
-  SPIFFE_PODS=$(kubectl get pod -n payment -l spiffe-managed=true \
+  # istio-validation namespace 內所有 spiffe-managed=true 的 Running pod
+  SPIFFE_PODS=$(kubectl get pod -n istio-validation -l spiffe-managed=true \
     --field-selector=status.phase=Running \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
 
   if [[ -z "$SPIFFE_PODS" ]]; then
-    fail "payment namespace 中找不到 spiffe-managed=true 且 Running 的 pod"
+    fail "istio-validation namespace 中找不到 spiffe-managed=true 且 Running 的 pod"
   else
     while IFS= read -r POD; do
       # 從 Envoy active secret 解出 cert chain，同時取 Issuer 和 URI SAN
-      CERT_INFO=$("$ISTIOCTL" proxy-config secret -n payment "$POD" -o json 2>/dev/null \
+      CERT_INFO=$("$ISTIOCTL" proxy-config secret -n istio-validation "$POD" -o json 2>/dev/null \
         | python3 -c "
 import json,sys,base64,subprocess
 d=json.load(sys.stdin)
@@ -231,10 +232,10 @@ for s in d.get('dynamicActiveSecrets',[]):
       fi
 
       # URI SAN 必須含正確 trust domain，排除 trust domain 設定錯誤的靜默失效
-      if echo "$SVID_SAN" | grep -q "poc.internal"; then
+      if echo "$SVID_SAN" | grep -q "istio-validation"; then
         pass "$POD: SVID SAN = $SVID_SAN"
       else
-        fail "$POD: SVID SAN 不含 poc.internal（${SVID_SAN:-empty}）"
+        fail "$POD: SVID SAN 不含 istio-validation（${SVID_SAN:-empty}）"
       fi
     done <<< "$SPIFFE_PODS"
   fi

@@ -2,13 +2,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: payment-core-sa
-  namespace: payment
+  namespace: istio-validation
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: payment-core
-  namespace: payment
+  namespace: istio-validation
 spec:
   selector:
     app: payment-core
@@ -20,7 +20,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: payment-core
-  namespace: payment
+  namespace: istio-validation
 spec:
   replicas: 1
   selector:
