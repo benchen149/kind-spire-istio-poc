@@ -214,18 +214,18 @@ CA（Certificate Authority）= 憑證授權機構，負責簽發 X.509 workload 
 |---|---|---|
 | **Workload cert 簽發者** | istiod（載入 cacerts Secret） | SPIRE Server |
 | **xDS TLS 簽發者** | istiod（同一個 CA） | istiod self-signed（獨立，不受影響） |
-| **cacerts Secret** | 👎 需要手動建立與管理 | 👍 不需要 |
-| **SVID 輪替**（cert 到期前自動換新，連線不中斷） | ➖ 自動，預設 TTL 24 小時 | 👍 自動，預設 TTL 1 小時（暴露窗口更小） |
-| **信任範圍** | 👎 限於單一 Istio mesh | 👍 跨 k8s、VM、裸機皆可 |
-| **跨叢集身份驗證** | 👎 需手動共享 root CA | 👍 SPIRE Federation（不共享私鑰） |
-| **非 k8s workload** | 👎 不支援 | 👍 支援（SPIRE 原生能力） |
-| **整體元件數** | 👍 少（僅 Istio） | 👎 多（+ SPIRE Server / Agent / Controller Manager / CSI Driver） |
-| **SPIRE Server HA** | 👍 不適用 | 👎 Production 需要（PostgreSQL backend） |
-| **Helm gateway 部署** | 👍 標準，無額外步驟 | 👎 需要 post-renderer（chart 不原生支援 CSI volume） |
-| **debug 複雜度** | 👍 低 | 👎 較高（多一條 SPIRE → CSI → Envoy SDS 路徑） |
-| **外部系統驗證 workload 身份** | 👎 困難（信任根不對外） | 👍 可行（透過 SPIRE trust bundle） |
-| **Signing CA 私鑰暴露窗口** | 👎 Intermediate CA TTL（通常設 100 年，幾乎永久） | 👍 ca_ttl（建議 24h，自動輪替） |
-| **SPIRE Server 掛掉的容錯時間** | 👍 不適用（istiod 掛掉容錯 24h） | 👎 等於 SVID TTL（預設 1h） |
+| **cacerts Secret** | 🔴 需要手動建立與管理 | 🟢 不需要 |
+| **SVID 輪替**（cert 到期前自動換新，連線不中斷） | 🟡 自動，預設 TTL 24 小時 | 🟢 自動，預設 TTL 1 小時（暴露窗口更小） |
+| **信任範圍** | 🔴 限於單一 Istio mesh | 🟢 跨 k8s、VM、裸機皆可 |
+| **跨叢集身份驗證** | 🔴 需手動共享 root CA | 🟢 SPIRE Federation（不共享私鑰） |
+| **非 k8s workload** | 🔴 不支援 | 🟢 支援（SPIRE 原生能力） |
+| **整體元件數** | 🟢 少（僅 Istio） | 🔴 多（+ SPIRE Server / Agent / Controller Manager / CSI Driver） |
+| **SPIRE Server HA** | 🟢 不適用 | 🔴 Production 需要（PostgreSQL backend） |
+| **Helm gateway 部署** | 🟢 標準，無額外步驟 | 🔴 需要 post-renderer（chart 不原生支援 CSI volume） |
+| **debug 複雜度** | 🟢 低 | 🔴 較高（多一條 SPIRE → CSI → Envoy SDS 路徑） |
+| **外部系統驗證 workload 身份** | 🔴 困難（信任根不對外） | 🟢 可行（透過 SPIRE trust bundle） |
+| **Signing CA 私鑰暴露窗口** | 🔴 Intermediate CA TTL（通常設 100 年，幾乎永久） | 🟢 ca_ttl（建議 24h，自動輪替） |
+| **SPIRE Server 掛掉的容錯時間** | 🟢 不適用（istiod 掛掉容錯 24h） | 🔴 等於 SVID TTL（預設 1h） |
 | **適用情境** | 純 k8s cluster | 混合環境、需要跨系統可驗證身份 |
 
 ---
@@ -246,11 +246,11 @@ Root CA（最長，離線保管）
 
 ### 架構一：Istio 自管 CA（cacerts）
 
-| 層級 | 預設值 | 常見設定 | Production 建議 | 備註 |
-|---|---|---|---|---|
-| Root CA | 由你建立時決定 | **100 年** | 10～20 年 | 離線保管，輪替複雜 |
-| Intermediate CA（`ca-cert.pem`） | 由你建立時決定 | **100 年** | 1～3 年 | 儲存於 k8s Secret，需人工輪替 |
-| Workload cert（SVID） | 24 小時 | 24 小時 | 1～24 小時 | istiod 自動輪替 |
+| 層級 | 預設值 | Production 建議 | 備註 |
+|---|---|---|---|
+| Root CA | 由你建立時決定 | 100 年 | 離線保管，輪替成本極高，長 TTL 降低操作風險 |
+| Intermediate CA（`ca-cert.pem`） | 由你建立時決定 | 100 年 | 儲存於 k8s Secret，需人工輪替，與 Root CA 對齊 |
+| Workload cert（SVID） | 24 小時 | 24 小時（維持預設） | istiod 自動輪替 |
 
 > Intermediate CA 設 100 年雖操作簡便，但 `ca-key.pem` 長期存在於 k8s Secret 中，若私鑰被竊，攻擊者可偽造任意 workload cert 長達 100 年，無法透過輪替撤銷。
 
@@ -258,19 +258,18 @@ Root CA（最長，離線保管）
 
 ### 架構二：SPIRE 作為 CA（本 PoC）
 
-| 層級 | 設定項目 | 本 PoC 值 | Production 建議 | 備註 |
-|---|---|---|---|---|
-| Root CA | SPIRE 預設 | `8760h`（1 年） | `87600h`（10 年） | 離線備份私鑰，輪替成本高，TTL 長降低操作風險 |
-| Signing CA | `ca_ttl` | `168h`（7 天） | `24h` | SPIRE 全自動輪替，短 TTL 無操作成本 |
-| SVID（Workload cert） | `default_x509_svid_ttl` | `1h` | `1h` | 已夠短，維持 |
+| 層級 | 設定項目 | 本 PoC 值 | Production 建議（HA 到位） | Production 建議（HA 未到位） | 備註 |
+|---|---|---|---|---|---|
+| Root CA | SPIRE 預設 | `8760h`（1 年） | `87600h`（10 年） | `87600h`（10 年） | 輪替成本高，TTL 長降低操作風險 |
+| Signing CA | `ca_ttl` | `168h`（7 天） | `24h` | `24h` | SPIRE 全自動輪替，短 TTL 無操作成本 |
+| SVID（Workload cert） | `default_x509_svid_ttl` | `1h` | `1h`（安全優先） | `24h`（與 Istio 對齊） | HA 未到位時拉長以換取容錯時間 |
 
-> `ca_ttl` 縮短到 24h：Signing CA 私鑰每 24 小時自動換一把，即使某時刻私鑰被竊，攻擊者最多只有 24 小時可偽造 SVID，SPIRE 不需人工介入。
+> **Signing CA `ca_ttl`** 不影響容錯時間（與可用性無關），建議維持 24h 安全設定。
+> **SVID TTL** 是容錯窗口的直接決定因素：HA 未到位前建議設 24h 與架構一對齊，待 HA 穩定後再收回 1h。
 
 ---
 
 ### SPIRE Server 可用性對 SVID 的影響
-
-SPIRE Server 是 Signing CA 的持有者，掛掉後的影響取決於 SVID TTL：
 
 ```
 SPIRE Server 掛掉
@@ -279,18 +278,41 @@ SPIRE Server 掛掉
       → TTL 到期後 Envoy 無有效 cert → mTLS 失敗
 ```
 
-| | SVID TTL = 1h（本 PoC） | SVID TTL = 24h（暫時緩解） |
+| | SVID TTL = 1h | SVID TTL = 24h |
 |---|---|---|
-| 容錯時間 | ~1 小時 | ~24 小時 |
+| 容錯時間 | ~1 小時 | ~24 小時（與 Istio 架構一對齊） |
 | Signing CA 暴露窗口 | 1 小時 | 24 小時 |
 | 新建 pod 能取得 SVID | 否 | 否 |
 | istiod / xDS | 不受影響 | 不受影響 |
 
-**Production 必要防護：**
+**Production 防護路線：**
 
 ```
-短期：監控 SPIRE Server healthcheck，掛掉立即告警，確保數分鐘內重啟
-長期：SPIRE Server 多副本 + PostgreSQL backend（sqlite3 不支援多副本）
+Phase 1（HA 未到位）：SVID TTL = 24h，監控 SPIRE Server，掛掉立即告警並重啟
+Phase 2（HA 到位）  ：SVID TTL 收回 1h，SPIRE Server 多副本 + PostgreSQL backend
 ```
 
-拉長 SVID TTL 是以安全性換可用性的暫時措施，不建議長期維持。
+---
+
+### 架構二：SPIRE 災難還原備份項目
+
+SPIRE Server 持有整條憑證鏈的核心資料，需備份以下項目：
+
+| 備份項目 | 內容 | 重要性 | 備份方式 |
+|---|---|---|---|
+| **Datastore**（sqlite3 / PostgreSQL） | Signing CA 私鑰、trust bundle、所有 entries、node attestation records | 🔴 最關鍵 | 定期快照；PostgreSQL 用標準 DB backup |
+| **Trust bundle**（`bundle.crt`） | Root CA 公鑰，Agent bootstrap 與 federation 需要 | 🔴 關鍵 | `spire-server bundle show` 匯出，離線保存 |
+| **server.conf** | SPIRE Server 設定檔 | 🟡 中 | 已在 git（`spire-server/server.conf`） |
+| **ClusterSPIFFEID CRD** | Entry 自動建立規則 | 🟡 中 | 已在 git（`spire/cluster-spiffeid.yaml`） |
+
+**還原優先順序：**
+
+```
+1. 還原 Datastore → SPIRE Server 可完整重啟，所有 entries 保留
+2. 若 Datastore 遺失 → 還原 trust bundle，重新 bootstrap SPIRE Server
+   → Controller Manager 會自動重建所有 entries（依 ClusterSPIFFEID）
+   → 需重新分發新 trust bundle 給所有 federated 方
+3. 若 trust bundle 也遺失 → 完整重新 bootstrap，影響範圍最大
+```
+
+> **PoC 目前狀態**：使用 sqlite3，資料存於 `/tmp/spire-server/data/`，`make clean` 會清除。Production 需改用 PostgreSQL 並啟用定期備份。
