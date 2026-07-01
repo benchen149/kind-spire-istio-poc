@@ -239,14 +239,21 @@ spec:
 **SPIRE Controller Manager 部署位置：實測發現與原設計不同**
 
 原設計預期 Controller Manager 跑在 Kind in-cluster、遠端連線外部 SPIRE Server。
-實際查證 [spire-controller-manager](https://github.com/spiffe/spire-controller-manager)
-官方文件與原始碼後發現：它**僅支援與 SPIRE Server 同機、透過本地 Unix Domain
-Socket 通訊**，不支援任何形式的跨網路連線遠端 Server（沒有
-`spireServerAddress` 這類參數）。因此本 PoC 改為：
+查證官方文件後發現這是硬性限制。
 
-- Controller Manager 與 SPIRE Server 跑在**同一台 host**（PoC 環境即模擬「外部 VM」的那台機器），共用本地 socket
+> **官方 README 原文**（[spiffe/spire-controller-manager](https://github.com/spiffe/spire-controller-manager/blob/main/README.md)）：
+>
+> *"designed to be deployed in the same pod as the SPIRE Server. It communicates with the SPIRE Server API using a private Unix Domain Socket within a shared volume."*
+
+設定文件（[spire-controller-manager-config.md](https://github.com/spiffe/spire-controller-manager/blob/main/docs/spire-controller-manager-config.md)）中連線設定僅有 `spireServerSocketPath`（預設 `/spire-server/api.sock`），**沒有任何 TCP / remote address 選項**，確認不支援跨網路連線。
+
+因此本 PoC 改為：
+
+- Controller Manager 與 SPIRE Server 跑在**同一台 host**（PoC 環境即模擬「外部 VM」的那台機器），共用本地 Unix Domain Socket
 - Controller Manager 透過標準 kubeconfig（`KUBECONFIG` 環境變數）**遠端**監控 Kind cluster 的 `ClusterSPIFFEID` / Pod / Namespace，這是 controller-runtime 的標準能力，不需要 Controller Manager 本身跑在該叢集裡
 - 因此 Controller Manager 的**行為**（entry 自動建立/清理）與原設計完全相同，差異只在**部署位置**
+
+**Production 含意：** SPIRE Server 若以 StatefulSet 跑在 k8s in-cluster，Controller Manager 應作為同一 Pod 的 **sidecar container**；若 SPIRE Server 跑在外部 VM，Controller Manager 必須部署在同一台 VM 上。
 
 `ClusterSPIFFEID` 的 CRD apiVersion 為 `spire.spiffe.io/v1alpha1`（目前唯一版本，從 SPIRE v1.0 起穩定）。
 CRD 必須**先於** Controller Manager 安裝，否則會找不到 `ClusterSPIFFEID` kind 而失敗。
