@@ -224,4 +224,73 @@ CA（Certificate Authority）= 憑證授權機構，負責簽發 X.509 workload 
 | **Helm gateway 部署** | 👍 標準，無額外步驟 | 👎 需要 post-renderer（chart 不原生支援 CSI volume） |
 | **debug 複雜度** | 👍 低 | 👎 較高（多一條 SPIRE → CSI → Envoy SDS 路徑） |
 | **外部系統驗證 workload 身份** | 👎 困難（信任根不對外） | 👍 可行（透過 SPIRE trust bundle） |
+| **Signing CA 私鑰暴露窗口** | 👎 Intermediate CA TTL（通常設 100 年，幾乎永久） | 👍 ca_ttl（建議 24h，自動輪替） |
+| **SPIRE Server 掛掉的容錯時間** | 👍 不適用（istiod 掛掉容錯 24h） | 👎 等於 SVID TTL（預設 1h） |
 | **適用情境** | 純 k8s cluster | 混合環境、需要跨系統可驗證身份 |
+
+---
+
+## CA 憑證 TTL 設定整理
+
+### 憑證鏈三層結構
+
+```
+Root CA（最長，離線保管）
+  └── Signing CA / Intermediate CA（中等，自動或手動輪替）
+        └── SVID / Workload Cert（最短，自動輪替）
+```
+
+**規則**：每層 TTL 必須明顯大於下一層，確保輪替期間不發生憑證空窗。
+
+---
+
+### 架構一：Istio 自管 CA（cacerts）
+
+| 層級 | 預設值 | 常見設定 | Production 建議 | 備註 |
+|---|---|---|---|---|
+| Root CA | 由你建立時決定 | **100 年** | 10～20 年 | 離線保管，輪替複雜 |
+| Intermediate CA（`ca-cert.pem`） | 由你建立時決定 | **100 年** | 1～3 年 | 儲存於 k8s Secret，需人工輪替 |
+| Workload cert（SVID） | 24 小時 | 24 小時 | 1～24 小時 | istiod 自動輪替 |
+
+> Intermediate CA 設 100 年雖操作簡便，但 `ca-key.pem` 長期存在於 k8s Secret 中，若私鑰被竊，攻擊者可偽造任意 workload cert 長達 100 年，無法透過輪替撤銷。
+
+---
+
+### 架構二：SPIRE 作為 CA（本 PoC）
+
+| 層級 | 設定項目 | 本 PoC 值 | Production 建議 | 備註 |
+|---|---|---|---|---|
+| Root CA | SPIRE 預設 | `8760h`（1 年） | `87600h`（10 年） | 離線備份私鑰，輪替成本高，TTL 長降低操作風險 |
+| Signing CA | `ca_ttl` | `168h`（7 天） | `24h` | SPIRE 全自動輪替，短 TTL 無操作成本 |
+| SVID（Workload cert） | `default_x509_svid_ttl` | `1h` | `1h` | 已夠短，維持 |
+
+> `ca_ttl` 縮短到 24h：Signing CA 私鑰每 24 小時自動換一把，即使某時刻私鑰被竊，攻擊者最多只有 24 小時可偽造 SVID，SPIRE 不需人工介入。
+
+---
+
+### SPIRE Server 可用性對 SVID 的影響
+
+SPIRE Server 是 Signing CA 的持有者，掛掉後的影響取決於 SVID TTL：
+
+```
+SPIRE Server 掛掉
+  → SPIRE Agent 無法更新 SVID
+    → 現有 SVID 繼續有效，直到 TTL 到期
+      → TTL 到期後 Envoy 無有效 cert → mTLS 失敗
+```
+
+| | SVID TTL = 1h（本 PoC） | SVID TTL = 24h（暫時緩解） |
+|---|---|---|
+| 容錯時間 | ~1 小時 | ~24 小時 |
+| Signing CA 暴露窗口 | 1 小時 | 24 小時 |
+| 新建 pod 能取得 SVID | 否 | 否 |
+| istiod / xDS | 不受影響 | 不受影響 |
+
+**Production 必要防護：**
+
+```
+短期：監控 SPIRE Server healthcheck，掛掉立即告警，確保數分鐘內重啟
+長期：SPIRE Server 多副本 + PostgreSQL backend（sqlite3 不支援多副本）
+```
+
+拉長 SVID TTL 是以安全性換可用性的暫時措施，不建議長期維持。
