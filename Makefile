@@ -47,10 +47,11 @@ deploy:  ## 部署測試 workload 並驗證
 check:  ## 執行 sanity check，驗證整體 PoC 架構是否正確
 	$(SCRIPTS)/08-sanity-check.sh
 
-clean:  ## 刪除 Kind cluster 並清理背景 process
+clean:  ## 完全重置：刪除 Kind cluster、停止背景 process、清除 SPIRE Server 資料
 	-kind delete cluster --name spire-istio-poc
 	-docker rm -f spire-controller-manager
 	-pkill -f "spire-server run" || true
+	-rm -rf /tmp/spire-server/
 
 status:  ## 查看環境狀態
 	@echo "=== Kind cluster ==="
