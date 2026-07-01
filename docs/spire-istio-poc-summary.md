@@ -161,57 +161,15 @@ sequenceDiagram
 
 ### 步驟說明
 
-#### Phase A — Admission（mutating → validating）
-
-| # | 動作 | 說明 |
+| Phase | 步驟 | 說明 |
 |---|---|---|
-| 1 | Kind → istiod | kubectl apply 送達 API server，進入 mutating admission 階段，API server 呼叫 istiod 的 MutatingWebhookConfiguration。 |
-| 2 | istiod → Kind | istiod 依 pod annotation `inject.istio.io/templates: "sidecar,spire"` 注入三樣東西：native sidecar（istio-proxy initContainer）、workload-socket CSI volume、`CA_ADDR` / `PILOT_CERT_PROVIDER` env var。 |
-| 3 | Kind → OPA | mutating 結束，API server 進入 validating admission 階段，傳入已注入後的 pod spec 給 OPA Gatekeeper validating webhook。 |
-| 4 | OPA（L1） | 執行 `K8sValidServiceAccountName` Constraint：SA 名稱必須符合 pattern `^[a-z0-9-]+-(?:gateway\|core\|data\|egress\|worker\|internal)-sa$`，防止任意命名繞過 SPIFFE ID 規則。 |
-| 5 | OPA（L2） | 執行 `K8sRequiredSpiffeLabel` Constraint：pod template 必須有 label `spiffe-managed: "true"`，Controller Manager 只為帶此 label 的 pod 建立 SPIRE entry。 |
-| 6 | OPA（L3） | 執行 `K8sForbidDefaultServiceAccount` Constraint：禁止使用 default SA，確保每個 workload 有唯一且可追蹤的 SPIFFE ID。 |
-| 7 | OPA → Kind | 三層驗證通過，Gatekeeper 回傳 allow。API server 持久化 pod spec，Scheduler 選節點，kubelet 開始建立 pod。 |
-
-#### Phase B — Entry creation
-
-| # | 動作 | 說明 |
-|---|---|---|
-| 8 | Kind → Controller Manager | Controller Manager（host Docker container）透過 kubeconfig watch API server，偵測到符合 ClusterSPIFFEID podSelector（`spiffe-managed: "true"`）的新 pod。 |
-| 9 | Controller Manager → SPIRE Server | 根據 ClusterSPIFFEID 的 `spiffeIDTemplate` 計算出 SPIFFE ID（`spiffe://poc.internal/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}`），透過本地 Unix socket 呼叫 SPIRE Server API 建立 entry。 |
-| 10 | SPIRE Server → Controller Manager | SPIRE Server 把 entry 寫入 datastore（PoC 用 sqlite3），回傳 entry ID。此後 SPIRE Agent 可依此 entry 為對應 workload 簽發 SVID。 |
-
-#### Phase C — Node Attestation
-
-| # | 動作 | 說明 |
-|---|---|---|
-| 11 | SPIRE Agent → SPIRE Server | SPIRE Agent DaemonSet pod 啟動時，以 k8s_psat NodeAttestor 發起 node attestation，傳送 projected service account token（audience: `spire-server`）。 |
-| 12 | SPIRE Server → k8s API | SPIRE Server 收到 PSAT token 後，透過 kubeconfig（PoC 環境；production 改用 OIDC Discovery）呼叫 k8s TokenReview API 驗證 token 合法性與 SA 資訊。 |
-| 13 | SPIRE Server → SPIRE Agent | TokenReview 通過，SPIRE Server 認可該 node 身份，回傳 trust bundle（CA 根憑證）。SPIRE Agent 完成 attestation，在節點建立 `agent.sock`（Workload API Unix socket）。 |
-
-#### Phase D — CSI socket ready（無編號；infrastructure 層操作，非協定訊息）
-
-SPIFFE CSI Driver DaemonSet 偵測到 pod 申請 `csi.spiffe.io` volume，將節點上的 `agent.sock` bind mount 進 pod 的 `/run/secrets/workload-spiffe-uds/`。native sidecar（istio-proxy initContainer）等待 socket 出現後才允許下一個 initContainer 繼續。
-
-#### Phase E — Envoy SDS（cert 路徑繞過 istiod）
-
-| # | 動作 | 說明 |
-|---|---|---|
-| 14 | Envoy → SPIRE Agent | Envoy sidecar 啟動，pilot-agent 讀取 `CA_ADDR=unix:///run/secrets/workload-spiffe-uds/socket` 與 `PILOT_CERT_PROVIDER=spiffe`，透過 CSI 掛載的 socket 向 SPIRE Agent 發起 SDS 請求。istiod 同步推送 xDS（routing/policy），但 **cert 不走 istiod**。 |
-| 15 | SPIRE Agent → SPIRE Server | SPIRE Agent 收到 SDS 請求，先做 workload attestation（確認請求方是合法的 pod/SA），通過後產生 CSR 並轉送 SPIRE Server 要求簽發。 |
-| 16 | SPIRE Server → SPIRE Agent | SPIRE Server 比對 entry，確認 workload 身份符合，用 CA 私鑰簽發 X.509 SVID（cert chain），回傳給 SPIRE Agent。 |
-| 17 | SPIRE Agent → Envoy | SPIRE Agent 透過 SDS 協定將 cert + private key 傳回 Envoy。Envoy 完成 TLS 初始化，`Issuer: O=SPIFFE`，SAN 為 `URI:spiffe://poc.internal/ns/payment/sa/<sa>`。 |
-
-#### Phase F — App start + mTLS
-
-| # | 動作 | 說明 |
-|---|---|---|
-| 18 | Kind → Envoy | Envoy sidecar（initContainer）就緒後，kubelet 啟動 app container。native sidecar 保證 Envoy 先於 app 就緒，app 啟動時 mTLS 已可用。 |
-| 19 | Envoy → Kind | 所有進出 pod 的流量由 Envoy 以 mTLS 處理，雙向驗證對端 SPIFFE ID，並對照 AuthorizationPolicy 設定的 `principal` 決定是否放行。 |
-
-#### SVID Rotation（無編號；背景持續執行）
-
-SPIRE Agent 在 SVID 到期前主動推送新 cert 給 Envoy（SDS push），Envoy 熱換憑證不中斷連線。TTL 預設 1 小時，rotation 發生在到期前約 30 秒。
+| A — Admission | 1–7 | `kubectl apply` → istiod mutating webhook 注入 Envoy sidecar + CSI volume → OPA validating webhook 執行 SA 命名 / spiffe label / 禁 default SA 三層規則 → admit |
+| B — Entry creation | 8–10 | Controller Manager 偵測到新 pod，依 ClusterSPIFFEID 向 SPIRE Server 建立 SPIFFE entry |
+| C — Node Attestation | 11–13 | SPIRE Agent 以 k8s_psat token 完成 node attestation，取得 trust bundle；節點上的 `agent.sock` 就緒 |
+| D — CSI socket ready | 無編號 | CSI Driver 將 `agent.sock` bind mount 進 pod；istio-proxy initContainer 等待 socket 出現後繼續 |
+| E — Envoy SDS | 14–17 | Envoy 透過 CSI socket 向 SPIRE Agent 請求 SVID；cert 路徑繞過 istiod（istiod 只推 xDS，不參與簽發） |
+| F — App start | 18–19 | Envoy 就緒後 app container 啟動；所有流量以 SPIFFE mTLS 雙向驗證 |
+| Rotation | 無編號 | SVID 到期前 SPIRE Agent 主動推送新 cert，Envoy 熱換不中斷連線 |
 
 ---
 
