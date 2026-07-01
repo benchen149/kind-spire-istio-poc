@@ -98,46 +98,47 @@ SPIRE Server（外部 VM）
 
 ```mermaid
 sequenceDiagram
-    participant Dev as Dev / k8s
+    participant Dev as Dev/k8s
     participant OPA as OPA Gatekeeper
     participant CM  as Controller Manager
     participant SS  as SPIRE Server
-    participant SA  as SPIRE Agent
+    participant SA  as SPIRE Agent+CSI
     participant EN  as Envoy
 
     rect rgb(220, 235, 255)
-        Note over Dev,EN: Phase A — OPA Admission
-        Dev->>OPA: kubectl apply (Deployment)
-        OPA->>OPA: L1 SA 命名規則驗證
-        OPA->>OPA: L2 spiffe-managed label 驗證
-        OPA->>OPA: L3 禁止 default SA
+        Note over Dev,EN: Phase A - OPA Admission
+        Dev->>OPA: kubectl apply Deployment
+        OPA->>OPA: L1 SA naming rule
+        OPA->>OPA: L2 spiffe-managed label
+        OPA->>OPA: L3 no default SA
         OPA-->>Dev: admit
     end
 
     rect rgb(220, 255, 220)
-        Note over Dev,EN: Phase B — Entry 自動建立
+        Note over Dev,EN: Phase B - Entry creation
         Dev->>CM: pod created
-        CM->>SS: entry create（SPIFFE ID）
+        CM->>SS: entry create SPIFFE ID
         SS-->>CM: entry stored
     end
 
     rect rgb(255, 240, 210)
-        Note over Dev,EN: Phase C — Node Attestation
+        Note over Dev,EN: Phase C - Node Attestation
         SA->>SS: k8s_psat token
-        SS->>SA: TokenReview（via kubeconfig）
+        SS->>SA: TokenReview via kubeconfig
         SS-->>SA: attested + trust bundle
-        Note over SA: agent.sock 建立
+        Note over SA: agent.sock ready
     end
 
     rect rgb(240, 220, 255)
-        Note over Dev,EN: Phase D — CSI socket 就緒
-        EN->>SA: wait-for-spire-socket（initContainer，等待 CSI 掛載的 socket）
-        Note over EN: /run/secrets/workload-spiffe-uds/socket 出現
+        Note over Dev,EN: Phase D - CSI socket ready
+        SA-->>EN: CSI Driver mounts agent.sock into workload volume
+        EN->>EN: initContainer waits for socket
+        Note over EN: workload-spiffe-uds/socket ready
     end
 
     rect rgb(255, 255, 210)
-        Note over Dev,EN: Phase E — Envoy SDS（不經過 istiod）
-        EN->>SA: SDS request（透過 SPIFFE CSI Driver 直連 agent.sock）
+        Note over Dev,EN: Phase E - Envoy SDS direct to SPIRE Agent
+        EN->>SA: SDS request via CSI socket
         SA->>SS: CSR relay
         SS-->>SA: signed SVID
         SA-->>EN: cert + key
@@ -145,12 +146,12 @@ sequenceDiagram
     end
 
     rect rgb(210, 255, 240)
-        Note over Dev,EN: Phase F — App 啟動 + mTLS
-        Dev->>EN: App container 啟動
-        EN-->>Dev: mTLS（spiffe://poc.internal/ns/&lt;ns&gt;/sa/&lt;sa&gt;）
+        Note over Dev,EN: Phase F - App start + mTLS
+        Dev->>EN: app container start
+        EN-->>Dev: mTLS spiffe://poc.internal/ns/NS/sa/SA
     end
 
-    Note over SA,EN: ↺ SVID rotate：Agent 在 TTL 前推新 SVID → CSI socket push → Envoy 自動更新
+    Note over SA,EN: SVID rotate - Agent pushes new SVID before TTL expires
 ```
 
 ---
