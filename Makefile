@@ -50,7 +50,7 @@ check:  ## 執行 sanity check，驗證整體 PoC 架構是否正確
 clean:  ## 完全重置：刪除 Kind cluster、停止背景 process、清除 SPIRE Server 資料
 	-kind delete cluster --name spire-istio-poc
 	-docker rm -f spire-controller-manager
-	-pkill -f "spire-server run" || true
+	pkill -f "spire-server run" || true
 	-rm -rf /tmp/spire-server/
 
 status:  ## 查看環境狀態
