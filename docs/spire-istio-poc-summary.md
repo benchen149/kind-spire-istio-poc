@@ -131,8 +131,8 @@ sequenceDiagram
 
     rect rgb(248, 238, 255)
         Note over Dev,EN: Phase D - CSI socket ready
-        Note over SA,EN: CSI Driver mounts agent.sock into pod volume
-        Note over SA,EN: initContainer waits until socket ready
+        Note over Dev,EN: CSI Driver mounts agent.sock into pod volume
+        Note over Dev,EN: initContainer waits until socket ready
     end
 
     rect rgb(255, 255, 238)
@@ -141,7 +141,7 @@ sequenceDiagram
         SA->>SS: CSR relay
         SS-->>SA: signed SVID
         SA-->>EN: cert + key
-        Note over EN: Envoy ready
+        Note over Dev,EN: Envoy ready
     end
 
     rect rgb(238, 255, 248)
