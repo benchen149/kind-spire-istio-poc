@@ -139,6 +139,56 @@ pod 有 spiffe-managed=true         ← workload 明確 opt-in
 
 ---
 
+## agent.sock（SPIFFE Workload API Socket）
+
+SPIRE Agent 啟動後建立一個 **Unix Domain Socket（UDS）**，workload 透過它與 Agent 通訊取得 SVID。
+
+### 路徑鏈
+
+```
+SPIRE Agent（DaemonSet，每個 node 一個）
+  └── 建立 UDS：/run/spire/agent-sockets/spire-agent.sock（hostPath）
+        │
+        ▼  SPIFFE CSI Driver 將 socket bind mount 進 pod
+pod 內路徑：/run/secrets/workload-spiffe-uds/socket
+        │
+        ▼  Envoy 透過 CA_ADDR 連線
+CA_ADDR=unix:///run/secrets/workload-spiffe-uds/socket
+```
+
+pod 內看到的檔名是 `socket`（由 CSI Driver spec 決定），不是原始的 `spire-agent.sock`。
+
+### Socket 上跑的協定
+
+Socket 上運行 **SPIFFE Workload API**（gRPC），Envoy 作為 client 呼叫：
+
+| gRPC 方法 | 用途 |
+|---|---|
+| `FetchX509SVID` | 取得 X.509 格式的 SVID（mTLS 用） |
+| `FetchJWTSVID` | 取得 JWT 格式的 SVID（HTTP Bearer token 用） |
+| `FetchX509Bundles` | 取得 trust bundle（驗對方 cert 用） |
+
+### SPIRE Agent 如何驗證 caller
+
+Agent 收到請求時，透過 Linux kernel 機制確認呼叫方身份：
+
+| 驗證方式 | 說明 |
+|---|---|
+| UID / GID | 確認 process 的使用者 |
+| PID | 查 `/proc/<pid>/` 取得 cgroup、namespace 資訊 |
+| cgroup | 比對 k8s pod cgroup 路徑，確認是哪個 pod |
+
+驗證通過後，Agent 向 SPIRE Server 查詢是否有符合的 Entry，有則簽發 SVID 回傳。
+
+### 為什麼用 CSI Driver 而非 hostPath 直接掛
+
+| 方式 | 問題 |
+|---|---|
+| hostPath 直接掛 socket | 所有 pod 都能存取，無法限制特定 workload |
+| SPIFFE CSI Driver | 每次 pod 啟動時動態 provision，只掛給有需要的 pod；配合 `spiffe-managed=true` label 控制範圍 |
+
+---
+
 ## 三者關係總結
 
 ```
