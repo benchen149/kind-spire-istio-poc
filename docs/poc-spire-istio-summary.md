@@ -58,8 +58,9 @@ kind-spire-istio-poc/
 │   └── 08-sanity-check.sh          # 14 section 全面健康檢查（make check）
 │
 └── docs/
-    ├── spire-istio-poc-summary.md         # 本文件
-    └── workload-identity-architecture.md  # SPIFFE ID / SPIRE Entry / CA 架構比較
+    ├── poc-spire-istio-summary.md         # 本文件：PoC 實作參考、設計決策、驗證指令
+    ├── workload-identity-architecture.md  # SPIFFE/SPIRE 概念架構、CA 比較、DR 備份
+    └── istio-spire-migration-spec.md      # Istio 維護者遷移操作指南（切換流程、維護成本）
 ```
 
 ---
