@@ -100,7 +100,7 @@ SPIRE Server（外部 VM）
 %%{init: {'theme': 'default', 'themeVariables': {'noteBkgColor': '#f5f5f5', 'noteTextColor': '#333', 'activationBkgColor': '#e8e8e8'}}}%%
 sequenceDiagram
     autonumber
-    participant Dev as Dev/k8s
+    participant Kind as Kind cluster
     participant OPA as OPA Gatekeeper
     participant CM  as Controller Manager
     participant SS  as SPIRE Server
@@ -108,23 +108,23 @@ sequenceDiagram
     participant EN  as Envoy
 
     rect rgb(238, 244, 255)
-        Note over Dev,EN: Phase A - OPA Admission
-        Dev->>OPA: kubectl apply Deployment
+        Note over Kind,EN: Phase A - OPA Admission
+        Kind->>OPA: kubectl apply Deployment
         OPA->>OPA: L1 SA naming rule
         OPA->>OPA: L2 spiffe-managed label
         OPA->>OPA: L3 no default SA
-        OPA-->>Dev: admit
+        OPA-->>Kind: admit
     end
 
     rect rgb(238, 255, 238)
-        Note over Dev,EN: Phase B - Entry creation
-        Dev->>CM: pod created
+        Note over Kind,EN: Phase B - Entry creation
+        Kind->>CM: pod created
         CM->>SS: entry create SPIFFE ID
         SS-->>CM: entry stored
     end
 
     rect rgb(255, 248, 238)
-        Note over Dev,EN: Phase C - Node Attestation
+        Note over Kind,EN: Phase C - Node Attestation
         SA->>SS: k8s_psat token
         SS->>SA: TokenReview via kubeconfig
         SS-->>SA: attested + trust bundle
@@ -132,24 +132,24 @@ sequenceDiagram
     end
 
     rect rgb(248, 238, 255)
-        Note over Dev,EN: Phase D - CSI socket ready
-        Note over Dev,EN: CSI Driver mounts agent.sock into pod volume
-        Note over Dev,EN: initContainer waits until socket ready
+        Note over Kind,EN: Phase D - CSI socket ready
+        Note over Kind,EN: CSI Driver mounts agent.sock into pod volume
+        Note over Kind,EN: initContainer waits until socket ready
     end
 
     rect rgb(255, 255, 238)
-        Note over Dev,EN: Phase E - Envoy SDS direct to SPIRE Agent
+        Note over Kind,EN: Phase E - Envoy SDS direct to SPIRE Agent
         EN->>SA: SDS request via CSI socket
         SA->>SS: CSR relay
         SS-->>SA: signed SVID
         SA-->>EN: cert + key
-        Note over Dev,EN: Envoy ready
+        Note over Kind,EN: Envoy ready
     end
 
     rect rgb(238, 255, 248)
-        Note over Dev,EN: Phase F - App start + mTLS
-        Dev->>EN: app container start
-        EN-->>Dev: mTLS spiffe://poc.internal/ns/NS/sa/SA
+        Note over Kind,EN: Phase F - App start + mTLS
+        Kind->>EN: app container start
+        EN-->>Kind: mTLS spiffe://poc.internal/ns/NS/sa/SA
     end
 
     Note over SA,EN: SVID rotate - Agent pushes new SVID before TTL expires
