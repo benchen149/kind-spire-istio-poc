@@ -40,7 +40,7 @@ check   "kubectl 可連線 kind-spire-istio-poc" \
 # ─── 2. SPIRE Server (host process) ───────────────────────────────────────
 section "2. SPIRE Server（host）"
 check   "spire-server process 執行中" \
-        bash -c "pgrep -f 'spire-server run' -q"
+        bash -c "pgrep -qf 'spire-server run'"
 check   "SPIRE Server socket 存在 ($SPIRE_SOCK)" \
         test -S "$SPIRE_SOCK"
 check   "SPIRE Server healthcheck 通過" \

@@ -26,3 +26,6 @@ docker run -d --name spire-controller-manager \
 
 sleep 3
 docker logs spire-controller-manager --tail 40
+
+# ClusterSPIFFEID 定義 SPIFFE ID template，Controller Manager 依此自動建立 entry
+kubectl apply -f "$REPO_ROOT/spire/cluster-spiffeid.yaml"
