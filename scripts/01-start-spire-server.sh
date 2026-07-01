@@ -4,7 +4,7 @@
 # Kind cluster 內的 SPIRE Agent 透過 kind docker network 的 gateway IP 連線。
 set -euo pipefail
 
-SPIRE_VERSION="1.9.6"
+SPIRE_VERSION="${SPIRE_VERSION:-1.9.6}"
 SPIRE_HOME="/opt/spire"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

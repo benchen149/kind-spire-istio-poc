@@ -8,7 +8,7 @@ helm repo update >/dev/null
 helm upgrade --install gatekeeper gatekeeper/gatekeeper \
   --namespace gatekeeper-system \
   --create-namespace \
-  --version 3.18.2 \
+  --version "${GATEKEEPER_VERSION:-3.18.2}" \
   --set replicas=1 \
   --set auditInterval=60
 

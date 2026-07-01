@@ -6,7 +6,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CM_HOME="/opt/spire-controller-manager"
-IMAGE="ghcr.io/spiffe/spire-controller-manager:0.6.6"
+IMAGE="ghcr.io/spiffe/spire-controller-manager:${SPIRE_CM_VERSION:-0.6.6}"
 
 mkdir -p "$CM_HOME/conf"
 cp "$REPO_ROOT/spire/controller-manager-config.yaml" "$CM_HOME/conf/config.yaml"

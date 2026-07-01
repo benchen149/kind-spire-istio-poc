@@ -8,7 +8,7 @@ helm repo add spiffe https://spiffe.github.io/helm-charts-hardened >/dev/null 2>
 helm repo update >/dev/null
 
 # Step 1：CRD chart 需先安裝
-helm upgrade --install --create-namespace -n "$NAMESPACE" spire-crds spiffe/spire-crds --version 0.5.0
+helm upgrade --install --create-namespace -n "$NAMESPACE" spire-crds spiffe/spire-crds --version "${SPIRE_CRDS_CHART_VERSION:-0.5.0}"
 
 # Step 2：找出 Kind docker network 的 gateway IP，讓 Kind 內的 Agent 連到 host 上的 SPIRE Server
 KIND_GATEWAY=$(docker network inspect kind --format '{{(index .IPAM.Config 1).Gateway}}')
@@ -21,7 +21,7 @@ kubectl create configmap spire-bundle -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Step 4：安裝 SPIRE Agent（DaemonSet），spire-server.enabled=false 因為 Server 在外部
-helm upgrade --install -n "$NAMESPACE" spire-agent spiffe/spire --version 0.21.0 \
+helm upgrade --install -n "$NAMESPACE" spire-agent spiffe/spire --version "${SPIRE_AGENT_CHART_VERSION:-0.21.0}" \
   -f "$REPO_ROOT/spire/values-agent.yaml" \
   --set spire-agent.server.address="${KIND_GATEWAY}" \
   --set spire-agent.server.port="${SPIRE_SERVER_PORT}"
