@@ -37,6 +37,6 @@ spec:
       serviceAccountName: payment-core-sa
       containers:
         - name: app
-          image: kennethreitz/httpbin
+          image: kennethreitz/httpbin:latest
           ports:
             - containerPort: 80
