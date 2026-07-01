@@ -97,6 +97,7 @@ SPIRE Server（外部 VM）
 > samples/security/spire/](https://github.com/istio/istio/tree/master/samples/security/spire)。
 
 ```mermaid
+%%{init: {'theme': 'default', 'themeVariables': {'noteBkgColor': '#f5f5f5', 'noteTextColor': '#333', 'activationBkgColor': '#e8e8e8'}}}%%
 sequenceDiagram
     participant Dev as Dev/k8s
     participant OPA as OPA Gatekeeper
