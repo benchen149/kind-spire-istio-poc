@@ -1,0 +1,13 @@
+gateways:
+  istio-ingressgateway:
+    name: validation-ingressgateway
+    labels:
+      app: validation-ingressgateway
+      istio: ingressgateway
+      spiffe-managed: "true"
+
+global:
+  # pilotCertProvider 保留 istiod，讓 chart 保留 istiod-ca-cert volume/mount，
+  # xDS 連線需要此 CA cert 驗 istiod TLS。
+  # CA_ADDR 和 PILOT_CERT_PROVIDER 的 workload cert 路徑由 post-renderer 覆寫為 SPIRE。
+  pilotCertProvider: "istiod"

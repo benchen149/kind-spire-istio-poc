@@ -1,0 +1,13 @@
+# 實測發現：PERMISSIVE 模式下，即使 Envoy 已透過 SPIFFE CSI Driver 拿到
+# SPIRE 簽發的憑證且 TLS handshake 成功、SAN 完全相符，AuthorizationPolicy
+# 仍會判定 rbac_access_denied_matched_policy[none]（RBAC 引擎沒有把連線視為
+# 已驗證的 "authenticated" principal）。改為 STRICT 後才正確生效。
+# 本 PoC 的 payment namespace 一律使用 STRICT mTLS。
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-validation
+spec:
+  mtls:
+    mode: STRICT

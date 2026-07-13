@@ -1,0 +1,70 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: default
+  meshConfig:
+    trustDomain: poc.internal
+    accessLogFile: /dev/stdout
+  components:
+    ingressGateways:
+      - enabled: true
+        name: istio-ingressgateway
+        k8s:
+          hpaSpec:
+            minReplicas: 1
+            maxReplicas: 1
+          overlays:
+            - kind: Deployment
+              name: istio-ingressgateway
+              patches:
+                # 預設 workload-socket 是 emptyDir，改成 SPIFFE CSI Driver volume
+                - path: spec.template.spec.volumes[name:workload-socket]
+                  value:
+                    name: workload-socket
+                    csi:
+                      driver: csi.spiffe.io
+                      readOnly: true
+                # cert 來源從 istiod 改為 SPIRE Agent socket
+                - path: spec.template.spec.containers[name:istio-proxy].env[name:CA_ADDR].value
+                  value: "unix:///run/secrets/workload-spiffe-uds/socket"
+                - path: spec.template.spec.containers[name:istio-proxy].env[name:PILOT_CERT_PROVIDER].value
+                  value: "spiffe"
+    pilot:
+      k8s:
+        env:
+          - name: PILOT_FILTER_GATEWAY_CLUSTER_CONFIG
+            value: "true"
+          - name: PILOT_HTTP10
+            value: "true"
+          # Istio 1.29+：native sidecar（initContainer, restartPolicy: Always）
+          - name: ENABLE_NATIVE_SIDECARS
+            value: "true"
+  values:
+    global:
+      variant: debug
+      meshID: mesh1
+    # 自訂 spire sidecar template：只有帶 annotation
+    # inject.istio.io/templates: "sidecar,spire" 的 workload
+    # 才會掛載 SPIFFE CSI Driver 的 socket volume。
+    # native sidecar 模式下需 patch initContainers（非 containers）。
+    sidecarInjectorWebhook:
+      templates:
+        spire: |
+          spec:
+            initContainers:
+            - name: istio-proxy
+              env:
+              # 告訴 pilot-agent 改連 SPIRE Agent socket 取 cert，而非 istiod
+              - name: CA_ADDR
+                value: unix:///run/secrets/workload-spiffe-uds/socket
+              - name: PILOT_CERT_PROVIDER
+                value: spiffe
+              volumeMounts:
+              - name: workload-socket
+                mountPath: /run/secrets/workload-spiffe-uds
+                readOnly: true
+            volumes:
+              - name: workload-socket
+                csi:
+                  driver: "csi.spiffe.io"
+                  readOnly: true

@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-ingressgateway
+spec:
+  template:
+    spec:
+      volumes:
+      - name: workload-socket
+        csi:
+          driver: csi.spiffe.io
+          readOnly: true

@@ -1,0 +1,33 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8svalidspiffeprincipal
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sValidSpiffePrincipal
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            trustDomain:
+              type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      # 注意：doc/spire-istio-poc-summary.md 原文的 pattern 要求 principal
+      # 帶 "spiffe://" 前綴，但 Istio AuthorizationPolicy 的 source.principals
+      # 欄位官方格式為 "<trustdomain>/ns/<ns>/sa/<sa>"，不含 URI scheme。
+      # 已用實際 Istio 1.29.4 環境驗證：帶 "spiffe://" 前綴的寫法會被 RBAC
+      # 判定 matched_policy[none] 而拒絕存取，即使憑證 SAN 完全相符。
+      rego: |
+        package k8svalidspiffeprincipal
+
+        violation[{"msg": msg}] {
+          rule := input.review.object.spec.rules[_]
+          principal := rule.from[_].source.principals[_]
+          trust_domain := input.parameters.trustDomain
+          pattern := sprintf("^%v/ns/[^/]+/sa/[^/]+$", [trust_domain])
+          not regex.match(pattern, principal)
+          msg := sprintf("principal '%v' 不符合 SPIFFE ID 格式 %v/ns/.../sa/...", [principal, trust_domain])
+        }
